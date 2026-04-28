@@ -1,0 +1,3206 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Acente Portalı</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+<!-- ✅ GitHub Gist Bulut Katmanı -->
+<script>
+  // ============================================================
+  // GITHUB GIST AYARLARI
+  // Aşağıdaki iki satırı doldurun:
+  // ============================================================
+  // Token artık dosyada değil — localStorage'dan okunur (Ayarlar'dan girilir)
+  const GIST_TOKEN = localStorage.getItem('ap_gist_token') || '';
+  const GIST_ID    = 'GIST_ID_BURAYA'; // İlk çalıştırmada otomatik oluşturulur
+  // ============================================================
+
+  const GIST_FILENAME = 'acente_portali_data.json';
+  let _gistIdRuntime = GIST_ID === 'GIST_ID_BURAYA' ? null : GIST_ID;
+
+  window.GistCloud = {
+    // Gist'e tüm veriyi yaz
+    async save(allData) {
+      try {
+        const headers = {
+          'Authorization': 'token ' + GIST_TOKEN,
+          'Content-Type': 'application/json'
+        };
+        const body = {
+          description: 'Acente Portalı Veri Yedegi',
+          public: false,
+          files: {
+            [GIST_FILENAME]: { content: JSON.stringify(allData, null, 2) }
+          }
+        };
+
+        if (_gistIdRuntime) {
+          // Mevcut gist'i güncelle
+          await fetch('https://api.github.com/gists/' + _gistIdRuntime, {
+            method: 'PATCH',
+            headers,
+            body: JSON.stringify(body)
+          });
+        } else {
+          // İlk sefer: yeni gist oluştur
+          const res = await fetch('https://api.github.com/gists', {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(body)
+          });
+          const json = await res.json();
+          if (json.id) {
+            _gistIdRuntime = json.id;
+            // Gist ID'yi localStorage'a kaydet (bir daha sormasin)
+            localStorage.setItem('ap_gist_id', json.id);
+            console.log('✅ Yeni Gist oluşturuldu. ID:', json.id);
+          } else {
+            console.warn('Gist oluşturulamadı:', json.message);
+          }
+        }
+        return true;
+      } catch(e) {
+        console.warn('Gist kayıt hatası:', e.message);
+        return false;
+      }
+    },
+
+    // Gist'ten tüm veriyi oku
+    async load() {
+      const gistId = _gistIdRuntime || localStorage.getItem('ap_gist_id');
+      if (!gistId) return null;
+      try {
+        const res = await fetch('https://api.github.com/gists/' + gistId, {
+          headers: { 'Authorization': 'token ' + GIST_TOKEN }
+        });
+        const json = await res.json();
+        const file = json.files && json.files[GIST_FILENAME];
+        if (file && file.content) return JSON.parse(file.content);
+      } catch(e) {
+        console.warn('Gist okuma hatası:', e.message);
+      }
+      return null;
+    },
+
+    isConfigured() {
+      return GIST_TOKEN !== 'TOKEN_BURAYA';
+    }
+  };
+
+  // Sayfa açılınca kaydedilmiş gist id'yi yükle
+  window.addEventListener('DOMContentLoaded', () => {
+    const saved = localStorage.getItem('ap_gist_id');
+    if (saved && !_gistIdRuntime) _gistIdRuntime = saved;
+    console.log('✅ GitHub Gist bulut katmanı hazır');
+  });
+</script>
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; }
+  .sidebar-link { @apply flex items-center gap-3 px-4 py-3 rounded-lg text-slate-300 hover:bg-slate-700 hover:text-white cursor-pointer transition; }
+  .sidebar-link.active { background: #2563eb; color: white; }
+  .stat-card { @apply bg-white rounded-xl shadow-sm border border-slate-200 p-5; }
+  .btn-primary { @apply bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 font-medium transition; }
+  .btn-secondary { @apply bg-slate-200 text-slate-800 px-4 py-2 rounded-lg hover:bg-slate-300 font-medium transition; }
+  .btn-danger { @apply bg-red-600 text-white px-3 py-1.5 rounded-lg hover:bg-red-700 text-sm transition; }
+  .btn-success { @apply bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 font-medium transition; }
+  .input { @apply w-full border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent; }
+  .label { @apply block text-sm font-medium text-slate-700 mb-1; }
+  .modal-backdrop { background: rgba(15, 23, 42, 0.6); }
+  table.data-table { @apply w-full border-collapse; }
+  table.data-table th { @apply bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider px-4 py-3 border-b border-slate-200; }
+  table.data-table td { @apply px-4 py-3 border-b border-slate-100 text-sm text-slate-700; }
+  table.data-table tr:hover td { @apply bg-slate-50; }
+  .badge { @apply inline-block px-2 py-0.5 rounded-full text-xs font-medium; }
+  .badge-green { @apply bg-green-100 text-green-800; }
+  .badge-yellow { @apply bg-yellow-100 text-yellow-800; }
+  .badge-red { @apply bg-red-100 text-red-800; }
+  .badge-blue { @apply bg-blue-100 text-blue-800; }
+  .cal-day { @apply border border-slate-200 p-1 min-h-[80px] text-xs bg-white; }
+  .cal-day.other { @apply bg-slate-50 text-slate-400; }
+  .cal-day.today-highlight { background: #eff6ff; border-color: #3b82f6; }
+  .cal-event { @apply bg-blue-100 text-blue-800 rounded px-1 py-0.5 mb-0.5 text-[10px] truncate cursor-pointer hover:bg-blue-200; }
+  .cal-event-tour-start { @apply bg-emerald-100 text-emerald-800 rounded px-1 py-0.5 mb-0.5 text-[10px] truncate cursor-pointer hover:bg-emerald-200 font-semibold; }
+  .cal-event-tour-end { @apply bg-rose-100 text-rose-800 rounded px-1 py-0.5 mb-0.5 text-[10px] truncate cursor-pointer hover:bg-rose-200 font-semibold; }
+  .cal-event-tour { @apply bg-teal-50 text-teal-700 rounded px-1 py-0.5 mb-0.5 text-[10px] truncate cursor-pointer border-l-2 border-teal-400; }
+  .cal-event-booking-in { @apply bg-blue-100 text-blue-800 rounded px-1 py-0.5 mb-0.5 text-[10px] truncate cursor-pointer hover:bg-blue-200 font-semibold; }
+  .cal-event-booking-out { @apply bg-amber-100 text-amber-800 rounded px-1 py-0.5 mb-0.5 text-[10px] truncate cursor-pointer hover:bg-amber-200 font-semibold; }
+
+  /* ===== MOBILE RESPONSIVE ===== */
+  @media (max-width: 768px) {
+    #appLayout { flex-direction: column !important; }
+    aside { width: 100% !important; flex-direction: row !important; flex-wrap: wrap !important; padding: 6px !important; }
+    aside > div:first-child { padding: 8px 12px !important; flex: 1; }
+    aside nav { flex-direction: row !important; flex-wrap: wrap !important; gap: 3px !important; padding: 4px 8px !important; width: 100% !important; flex: none !important; }
+    .sidebar-link { padding: 6px 10px !important; font-size: 11px !important; gap: 4px !important; }
+    aside > div:last-child { flex-direction: row !important; align-items: center !important; gap: 6px !important; padding: 4px 8px !important; width: 100% !important; border-top: none !important; border-left: 1px solid #334155 !important; }
+    #view-container { padding: 12px !important; }
+    .grid-cols-2, .grid-cols-4 { grid-template-columns: 1fr !important; }
+    .modal-inner { max-width: 100% !important; margin: 8px; border-radius: 10px; }
+    table.data-table td, table.data-table th { padding: 7px 8px !important; font-size: 11px !important; }
+    .stat-card p.text-3xl { font-size: 22px !important; }
+  }
+  @media (max-width: 480px) {
+    aside nav { display: grid; grid-template-columns: 1fr 1fr; }
+  }
+</style>
+</head>
+<body class="bg-slate-100">
+
+<!-- LOGIN SCREEN -->
+<div id="loginScreen" class="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-600 to-indigo-800">
+  <div class="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md">
+    <div class="text-center mb-6">
+      <div class="inline-flex items-center justify-center w-16 h-16 bg-blue-100 rounded-full mb-3">
+        <svg class="w-9 h-9 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
+      </div>
+      <h1 class="text-2xl font-bold text-slate-800">Acente Portalı</h1>
+      <p class="text-slate-500 text-sm mt-1">Sisteme giriş yapın</p>
+    </div>
+    <form id="loginForm" class="space-y-4">
+      <div>
+        <label class="label">Kullanıcı Adı</label>
+        <input type="text" id="loginUser" class="input" placeholder="admin" required>
+      </div>
+      <div>
+        <label class="label">Şifre</label>
+        <input type="password" id="loginPass" class="input" placeholder="••••••••" required>
+      </div>
+      <div id="loginError" class="hidden text-red-600 text-sm bg-red-50 p-2 rounded"></div>
+      <button type="submit" class="btn-primary w-full">Giriş Yap</button>
+    </form>
+    <div class="mt-6 p-3 bg-slate-50 rounded-lg text-xs text-slate-600">
+      <p class="font-semibold mb-1">Demo Hesaplar:</p>
+      <p>admin / admin123 &nbsp;|&nbsp; satis / satis123</p>
+    </div>
+  </div>
+</div>
+
+<!-- MAIN APP -->
+<div id="app" class="hidden min-h-screen flex" id="appLayout">
+  <!-- SIDEBAR -->
+  <aside class="w-64 bg-slate-800 text-white flex flex-col">
+    <div class="p-5 border-b border-slate-700">
+      <h2 class="font-bold text-lg">Acente Portalı</h2>
+      <p class="text-xs text-slate-400" id="userBadge">-</p>
+    </div>
+    <nav class="flex-1 p-3 space-y-1">
+      <div class="sidebar-link active" data-view="dashboard">📊 Dashboard</div>
+      <div class="sidebar-link" data-view="bookings">🧾 Rezervasyonlar</div>
+      <div class="sidebar-link" data-view="tours">✈️ Turlar</div>
+      <div class="sidebar-link" data-view="vouchers">📄 Voucher'lar</div>
+      <div class="sidebar-link" data-view="calendar">📅 Takvim</div>
+      <div class="sidebar-link" data-view="customers">👥 Müşteri CRM</div>
+      <div class="sidebar-link" data-view="reports">📈 Satış Raporu</div>
+      <div class="sidebar-link" data-view="expenses">💸 Genel Giderler</div>
+      <div class="sidebar-link" data-view="tourprograms">🗺️ Tur Programları</div>
+      <div class="sidebar-link" data-view="settings">⚙️ Ayarlar</div>
+    </nav>
+    <div class="p-3 border-t border-slate-700">
+      <div id="cloudStatus" class="text-xs text-slate-400 px-4 py-1 mb-1">☁️ Bağlanıyor...</div>
+      <button id="logoutBtn" class="w-full text-left px-4 py-2 text-slate-300 hover:bg-slate-700 rounded-lg">🚪 Çıkış Yap</button>
+    </div>
+  </aside>
+
+  <!-- MAIN CONTENT -->
+  <main class="flex-1 overflow-y-auto">
+    <div id="view-container" class="p-6"></div>
+  </main>
+</div>
+
+<!-- MODAL CONTAINER -->
+<div id="modalContainer"></div>
+
+<script>
+// ============ DATA LAYER ============
+// Users stored in localStorage so passwords can be changed
+function getUsers() {
+  return {
+    'Onur': { pass: 'Master.2026', name: 'Onur', role: 'admin' }
+  };
+}
+function saveUsers(u) { DB.set('users', u); DB._cloudSave('users', u); }
+
+// Otomatik Gist yedekleme — her kayıtta çağrılır (debounced)
+let _gistSaveTimer = null;
+function scheduleGistSave() {
+  if (!window.GistCloud || !window.GistCloud.isConfigured()) return;
+  clearTimeout(_gistSaveTimer);
+  _gistSaveTimer = setTimeout(async () => {
+    const allData = {
+      customers: DB.customers(),
+      bookings: DB.bookings(),
+      tours: DB.tours(),
+      tourCategories: DB.tourCategories(),
+      settings: DB.settings(),
+      expenses: DB.expenses(),
+      tourPrograms: DB.tourPrograms(),
+      savedAt: new Date().toISOString()
+    };
+    const ok = await window.GistCloud.save(allData);
+    const el = document.getElementById('cloudStatus');
+    if (el) {
+      el.textContent = ok ? '☁️ Gist Yedeklendi' : '⚠️ Yedek Hatası';
+      el.style.color = ok ? '#86efac' : '#fbbf24';
+    }
+  }, 1500);
+}
+
+const DB = {
+  // ---- Yerel okuma/yazma (localStorage) ----
+  get(key, def) {
+    try { return JSON.parse(localStorage.getItem('ap_'+key)) ?? def; } catch { return def; }
+  },
+  set(key, val) {
+    localStorage.setItem('ap_'+key, JSON.stringify(val));
+    scheduleGistSave(); // Her kayıtta otomatik yedekle
+  },
+
+  // ---- Tüm veriyi Gist'ten senkronize et ----
+  async syncFromCloud() {
+    if (!window.GistCloud || !window.GistCloud.isConfigured()) return;
+    const data = await window.GistCloud.load();
+    if (!data) return;
+    const keys = ['customers','bookings','tours','tourCategories','settings','expenses','tourPrograms'];
+    keys.forEach(key => {
+      if (data[key] !== undefined) localStorage.setItem('ap_'+key, JSON.stringify(data[key]));
+    });
+  },
+
+  // ---- Koleksiyon metodları ----
+  customers: () => DB.get('customers', []),
+  saveCustomers: (v) => DB.set('customers', v),
+
+  bookings: () => DB.get('bookings', []),
+  saveBookings: (v) => DB.set('bookings', v),
+
+  tours: () => DB.get('tours', []),
+  saveTours: (v) => DB.set('tours', v),
+
+  tourCategories: () => DB.get('tourCategories', []),
+  saveTourCategories: (v) => DB.set('tourCategories', v),
+
+  settings: () => DB.get('settings', {
+    agencyName: 'Acente Adınız', agencyAddress: 'Adres bilgisi',
+    agencyPhone: '+90 xxx xxx xx xx', agencyEmail: 'info@acente.com', agencyLogo: ''
+  }),
+  saveSettings: (v) => DB.set('settings', v),
+
+  session: () => DB.get('session', null),
+  saveSession: (v) => DB.set('session', v),
+  expenses: () => DB.get('expenses', []),
+  saveExpenses: (v) => DB.set('expenses', v),
+  tourPrograms: () => DB.get('tourPrograms', []),
+  saveTourPrograms: (v) => DB.set('tourPrograms', v),
+};
+
+let currentUser = null;
+let currentView = 'dashboard';
+
+// ============ AUTH ============
+document.getElementById('loginForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const u = document.getElementById('loginUser').value.trim();
+  const p = document.getElementById('loginPass').value;
+  const USERS = getUsers();
+  if (USERS[u] && USERS[u].pass === p) {
+    currentUser = { username: u, ...USERS[u] };
+    DB.saveSession(currentUser);
+    showApp();
+  } else {
+    const err = document.getElementById('loginError');
+    err.textContent = 'Kullanıcı adı veya şifre hatalı!';
+    err.classList.remove('hidden');
+  }
+});
+
+document.getElementById('logoutBtn').addEventListener('click', () => {
+  cleanupRealtimeSync();
+  DB.saveSession(null);
+  currentUser = null;
+  document.getElementById('app').classList.add('hidden');
+  document.getElementById('loginScreen').classList.remove('hidden');
+});
+
+async function showApp() {
+  document.getElementById('loginScreen').classList.add('hidden');
+  document.getElementById('app').classList.remove('hidden');
+  document.getElementById('userBadge').textContent = currentUser.name + ' (' + currentUser.role + ')';
+
+  // Gist'ten güncel veriyi çek
+  if (window.GistCloud && window.GistCloud.isConfigured()) {
+    const syncBanner = document.createElement('div');
+    syncBanner.id = 'syncBanner';
+    syncBanner.className = 'fixed top-4 left-1/2 -translate-x-1/2 bg-blue-600 text-white px-6 py-3 rounded-full shadow-lg z-[70] flex items-center gap-2 text-sm font-medium';
+    syncBanner.innerHTML = '<span class="animate-spin">⏳</span> Gist verisi senkronize ediliyor...';
+    document.body.appendChild(syncBanner);
+
+    try {
+      await DB.syncFromCloud();
+      syncBanner.innerHTML = '✅ Senkronizasyon tamamlandı!';
+      syncBanner.className = syncBanner.className.replace('bg-blue-600', 'bg-green-600');
+    } catch(e) {
+      syncBanner.innerHTML = '⚠️ Çevrimdışı mod — yerel veriler kullanılıyor';
+      syncBanner.className = syncBanner.className.replace('bg-blue-600', 'bg-amber-500');
+    }
+    setTimeout(() => syncBanner.remove(), 2500);
+  }
+
+  render();
+}
+
+// Auto-login if session exists
+const savedSession = DB.session();
+if (savedSession && savedSession.username) {
+  // Session var, ama kullanıcı hâlâ geçerli mi kontrol et
+  const users = getUsers();
+  if (users[savedSession.username]) {
+    currentUser = savedSession;
+    showApp();
+  } else {
+    // Geçersiz session — temizle
+    DB.saveSession(null);
+  }
+}
+
+// ============ NAVIGATION ============
+document.querySelectorAll('.sidebar-link').forEach(link => {
+  link.addEventListener('click', () => {
+    document.querySelectorAll('.sidebar-link').forEach(l => l.classList.remove('active'));
+    link.classList.add('active');
+    currentView = link.dataset.view;
+    render();
+  });
+});
+
+function render() {
+  const c = document.getElementById('view-container');
+  switch(currentView) {
+    case 'dashboard': c.innerHTML = renderDashboard(); break;
+    case 'bookings': c.innerHTML = renderBookings(); attachBookingsHandlers(); break;
+    case 'tours': c.innerHTML = renderTours(); attachToursHandlers(); break;
+    case 'vouchers': c.innerHTML = renderVouchers(); attachVoucherHandlers(); break;
+    case 'calendar': c.innerHTML = renderCalendar(); attachCalendarHandlers(); break;
+    case 'customers': c.innerHTML = renderCustomers(); attachCustomerHandlers(); break;
+    case 'reports': c.innerHTML = renderReports(); attachReportHandlers(); break;
+    case 'settings': c.innerHTML = renderSettings(); attachSettingsHandlers(); break;
+    case 'expenses': c.innerHTML = renderExpenses(); attachExpensesHandlers(); break;
+    case 'tourprograms': c.innerHTML = renderTourPrograms(); attachTourProgramHandlers(); break;
+  }
+}
+
+// ============ UTILITIES ============
+const fmt = (n, currency = 'TRY') => {
+  const locales = { TRY: 'tr-TR', USD: 'en-US', EUR: 'de-DE' };
+  return new Intl.NumberFormat(locales[currency] || 'tr-TR', { style: 'currency', currency: currency || 'TRY' }).format(n || 0);
+};
+const fmtDate = (d) => d ? new Date(d).toLocaleDateString('tr-TR') : '-';
+const uid = () => Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
+
+function totalCost(b) { return (b.costs || []).reduce((s, c) => s + (parseFloat(c.amount) || 0), 0); }
+function profit(b) { return (parseFloat(b.salePrice) || 0) - totalCost(b); }
+function tourTotalCost(t) { return (t.costs || []).reduce((s, c) => s + (parseFloat(c.amount) || 0), 0); }
+function tourProfit(t) { return (parseFloat(t.salePrice) || 0) - tourTotalCost(t); }
+
+function openModal(html) {
+  const mc = document.getElementById('modalContainer');
+  mc.innerHTML = `<div class="fixed inset-0 modal-backdrop z-50 flex items-center justify-center p-4" onclick="if(event.target===this)closeModal()"><div class="bg-white rounded-xl shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto">${html}</div></div>`;
+}
+function closeModal() { document.getElementById('modalContainer').innerHTML = ''; }
+window.closeModal = closeModal;
+
+function toast(msg, type = 'success') {
+  const t = document.createElement('div');
+  const color = type === 'success' ? 'bg-green-600' : type === 'error' ? 'bg-red-600' : 'bg-blue-600';
+  t.className = `fixed top-4 right-4 ${color} text-white px-5 py-3 rounded-lg shadow-lg z-[60] transition-all`;
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 2500);
+}
+
+// ============ DASHBOARD ============
+function renderDashboard() {
+  const bookings = DB.bookings();
+  const tours = DB.tours();
+  const customers = DB.customers();
+  const s = DB.settings();
+  const usdRate = parseFloat(s.usdRate) || 32;
+  const eurRate = parseFloat(s.eurRate) || 35;
+
+  const confB = bookings.filter(b => b.status === 'confirmed');
+  const confT = tours.filter(t => t.status === 'confirmed');
+
+  const toTLLocal = (amount, cur) => cur==='USD'?amount*usdRate:cur==='EUR'?amount*eurRate:amount;
+
+  const bRevTL = confB.reduce((s,b)=>s+toTLLocal(parseFloat(b.salePrice)||0, b.currency||'TRY'),0);
+  const bCostTL = confB.reduce((s,b)=>s+toTLLocal(totalCost(b), b.currency||'TRY'),0);
+  const tRevTL = confT.reduce((s,t)=>s+toTLLocal(parseFloat(t.salePrice)||0, t.currency||'TRY'),0);
+  const tCostTL = confT.reduce((s,t)=>s+toTLLocal(tourTotalCost(t), t.currency||'TRY'),0);
+
+  // Genel Giderler
+  const expenses = DB.expenses();
+  const totalExpTL = expenses.reduce((sum,e)=>sum+toTLLocal(parseFloat(e.amount)||0, e.currency||'TRY'),0);
+  const nowD = new Date();
+  const monthExpTL = expenses
+    .filter(e=>e.date&&new Date(e.date).getMonth()===nowD.getMonth()&&new Date(e.date).getFullYear()===nowD.getFullYear())
+    .reduce((sum,e)=>sum+toTLLocal(parseFloat(e.amount)||0, e.currency||'TRY'),0);
+
+  // Gider sonrasi net kar
+  const grossProfitTL = (bRevTL - bCostTL) + (tRevTL - tCostTL);
+  const netProfitAfterExpTL = grossProfitTL - totalExpTL;
+  const totalCiroTL = bRevTL + tRevTL;
+
+  const now = new Date();
+  const upB = bookings.filter(b=>b.checkIn&&new Date(b.checkIn)>=now).sort((a,b)=>new Date(a.checkIn)-new Date(b.checkIn)).slice(0,5);
+  const upT = tours.filter(t=>t.startDate&&new Date(t.startDate)>=now).sort((a,b)=>new Date(a.startDate)-new Date(b.startDate)).slice(0,3);
+
+  const currencies = ['TRY','USD','EUR'];
+  const sym = {TRY:'₺',USD:'$',EUR:'€'};
+  const curData = {};
+  currencies.forEach(cur => {
+    const bF = confB.filter(b=>(b.currency||'TRY')===cur);
+    const tF = confT.filter(t=>(t.currency||'TRY')===cur);
+    curData[cur] = {
+      bR: bF.reduce((s,b)=>s+(parseFloat(b.salePrice)||0),0),
+      bC: bF.reduce((s,b)=>s+totalCost(b),0),
+      tR: tF.reduce((s,t)=>s+(parseFloat(t.salePrice)||0),0),
+      tC: tF.reduce((s,t)=>s+tourTotalCost(t),0),
+    };
+  });
+
+  return `
+    <h1 class="text-2xl font-bold text-slate-800 mb-6">Dashboard</h1>
+
+    <!-- Ozet kartlar -->
+    <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+      <div class="stat-card"><p class="text-slate-500 text-sm">Toplam Rez.</p><p class="text-3xl font-bold mt-1">${bookings.length}</p><p class="text-xs text-slate-400">${confB.length} konfirme</p></div>
+      <div class="stat-card"><p class="text-slate-500 text-sm">Toplam Tur</p><p class="text-3xl font-bold mt-1">${tours.length}</p><p class="text-xs text-slate-400">${confT.length} konfirme</p></div>
+      <div class="stat-card"><p class="text-slate-500 text-sm">Musteri</p><p class="text-3xl font-bold mt-1">${customers.length}</p></div>
+      <div class="stat-card"><p class="text-slate-500 text-sm">Toplam Ciro (TL)</p><p class="text-2xl font-bold text-green-600 mt-1">${fmt(totalCiroTL)}</p><p class="text-xs text-slate-400">1$=${usdRate}₺ · 1€=${eurRate}₺</p></div>
+      <div class="stat-card"><p class="text-slate-500 text-sm">Net Kar (Gider Sonrasi)</p><p class="text-2xl font-bold mt-1 ${netProfitAfterExpTL>=0?'text-blue-600':'text-red-600'}">${fmt(netProfitAfterExpTL)}</p><p class="text-xs text-slate-400">Gider: ${fmt(totalExpTL)}</p></div>
+    </div>
+
+    <!-- Rez / Tur / Gider P&L -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+        <h3 class="font-semibold text-slate-700 mb-3">🧾 Rezervasyon K&acirc;r/Zarar</h3>
+        <div class="grid grid-cols-3 gap-2">
+          <div class="text-center p-2 bg-green-50 rounded-lg"><p class="text-xs text-slate-500">Gelir</p><p class="font-bold text-green-600 text-sm">${fmt(bRevTL)}</p></div>
+          <div class="text-center p-2 bg-red-50 rounded-lg"><p class="text-xs text-slate-500">Maliyet</p><p class="font-bold text-red-500 text-sm">${fmt(bCostTL)}</p></div>
+          <div class="text-center p-2 ${bRevTL-bCostTL>=0?'bg-blue-50':'bg-red-50'} rounded-lg"><p class="text-xs text-slate-500">Net</p><p class="font-bold text-sm ${bRevTL-bCostTL>=0?'text-blue-600':'text-red-600'}">${fmt(bRevTL-bCostTL)}</p></div>
+        </div>
+      </div>
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+        <h3 class="font-semibold text-slate-700 mb-3">✈️ Tur K&acirc;r/Zarar</h3>
+        <div class="grid grid-cols-3 gap-2">
+          <div class="text-center p-2 bg-green-50 rounded-lg"><p class="text-xs text-slate-500">Gelir</p><p class="font-bold text-green-600 text-sm">${fmt(tRevTL)}</p></div>
+          <div class="text-center p-2 bg-red-50 rounded-lg"><p class="text-xs text-slate-500">Maliyet</p><p class="font-bold text-red-500 text-sm">${fmt(tCostTL)}</p></div>
+          <div class="text-center p-2 ${tRevTL-tCostTL>=0?'bg-blue-50':'bg-red-50'} rounded-lg"><p class="text-xs text-slate-500">Net</p><p class="font-bold text-sm ${tRevTL-tCostTL>=0?'text-blue-600':'text-red-600'}">${fmt(tRevTL-tCostTL)}</p></div>
+        </div>
+      </div>
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+        <h3 class="font-semibold text-slate-700 mb-3">💸 Genel Giderler</h3>
+        <div class="grid grid-cols-3 gap-2">
+          <div class="text-center p-2 bg-orange-50 rounded-lg"><p class="text-xs text-slate-500">Toplam</p><p class="font-bold text-orange-600 text-sm">${fmt(totalExpTL)}</p></div>
+          <div class="text-center p-2 bg-yellow-50 rounded-lg"><p class="text-xs text-slate-500">Bu Ay</p><p class="font-bold text-yellow-600 text-sm">${fmt(monthExpTL)}</p></div>
+          <div class="text-center p-2 bg-slate-50 rounded-lg"><p class="text-xs text-slate-500">Kalem</p><p class="font-bold text-slate-700 text-sm">${expenses.length}</p></div>
+        </div>
+        ${expenses.length>0?`<div class="mt-3 space-y-1">
+          ${[...expenses].sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,3).map(e=>`
+            <div class="flex justify-between text-xs py-1 border-b border-slate-100">
+              <span class="text-slate-600 truncate">${e.description||'-'}</span>
+              <span class="font-medium text-red-500 ml-2">${parseFloat(e.amount||0).toFixed(2)} ${e.currency||'TRY'}</span>
+            </div>`).join('')}
+          <button onclick="currentView='expenses';document.querySelectorAll('.sidebar-link').forEach(l=>l.classList.remove('active'));document.querySelector('[data-view=expenses]').classList.add('active');render();" class="text-xs text-blue-600 hover:underline mt-1">Tüm giderleri gör →</button>
+        </div>`:'<p class="text-xs text-slate-400 mt-2">Henüz gider eklenmemis.</p>'}
+      </div>
+    </div>
+
+    <!-- Kar ozeti — gider dusulmus -->
+    <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5 mb-6">
+      <h3 class="font-semibold text-slate-800 mb-3">📊 Kar/Zarar Özeti (Gider Düşülmüş)</h3>
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div class="text-center p-3 bg-green-50 rounded-lg"><p class="text-xs text-slate-500">Toplam Ciro</p><p class="font-bold text-green-600">${fmt(totalCiroTL)}</p></div>
+        <div class="text-center p-3 bg-red-50 rounded-lg"><p class="text-xs text-slate-500">Toplam Maliyet</p><p class="font-bold text-red-500">${fmt(bCostTL+tCostTL)}</p></div>
+        <div class="text-center p-3 bg-orange-50 rounded-lg"><p class="text-xs text-slate-500">Genel Giderler</p><p class="font-bold text-orange-600">${fmt(totalExpTL)}</p></div>
+        <div class="text-center p-3 ${netProfitAfterExpTL>=0?'bg-blue-50':'bg-red-50'} rounded-lg"><p class="text-xs text-slate-500">Net Kar</p><p class="font-bold ${netProfitAfterExpTL>=0?'text-blue-600':'text-red-600'}">${fmt(netProfitAfterExpTL)}</p><p class="text-xs text-slate-400">Marj: ${totalCiroTL?((netProfitAfterExpTL/totalCiroTL)*100).toFixed(1):0}%</p></div>
+      </div>
+    </div>
+
+    <!-- Doviz bazli -->
+    <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5 mb-6">
+      <h3 class="font-semibold text-slate-800 mb-4">💱 Döviz Bazlı Kâr/Zarar</h3>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        ${currencies.map(cur => {
+          const d = curData[cur];
+          const p = (d.bR+d.tR) - (d.bC+d.tC);
+          const tlK = toTLLocal(Math.abs(p), cur);
+          return `<div class="border border-slate-200 rounded-xl p-4">
+            <div class="flex justify-between items-center mb-3">
+              <span class="text-lg font-bold">${sym[cur]} ${cur}</span>
+              <span class="text-xs px-2 py-1 rounded-full font-semibold ${p>=0?'bg-blue-100 text-blue-700':'bg-red-100 text-red-700'}">
+                ${p>=0?'Kâr':'Zarar'}: ${sym[cur]}${Math.abs(p).toLocaleString('tr-TR',{minimumFractionDigits:2})}
+              </span>
+            </div>
+            <div class="space-y-1 text-xs">
+              <div class="flex justify-between py-1 border-b border-slate-100"><span class="text-slate-500">Rez. Gelir</span><span class="text-green-600 font-medium">${sym[cur]}${d.bR.toFixed(2)}</span></div>
+              <div class="flex justify-between py-1 border-b border-slate-100"><span class="text-slate-500">Tur Gelir</span><span class="text-green-600 font-medium">${sym[cur]}${d.tR.toFixed(2)}</span></div>
+              <div class="flex justify-between py-1"><span class="text-slate-500">Maliyet</span><span class="text-red-500 font-medium">${sym[cur]}${(d.bC+d.tC).toFixed(2)}</span></div>
+              ${cur!=='TRY'?`<div class="mt-2 px-2 py-1 bg-yellow-50 rounded text-yellow-700 text-[10px]">TL karsiligi ≈ ${fmt(tlK)}</div>`:''}
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+        <h3 class="font-semibold text-slate-800 mb-4">📅 Yaklasan Rezervasyonlar</h3>
+        ${upB.length ? upB.map(b=>`<div class="flex justify-between items-center p-3 bg-slate-50 rounded-lg mb-2"><div><p class="font-medium text-slate-800 text-sm">${b.customerName||'-'}</p><p class="text-xs text-slate-500">${b.hotelName||''} • ${fmtDate(b.checkIn)} → ${fmtDate(b.checkOut)}</p></div><span class="badge ${b.status==='confirmed'?'badge-green':'badge-yellow'}">${b.status==='confirmed'?'Konfirme':'Beklemede'}</span></div>`).join('') : '<p class="text-slate-400 text-sm">Yaklasan rezervasyon yok.</p>'}
+      </div>
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+        <h3 class="font-semibold text-slate-800 mb-4">✈️ Yaklasan Turlar</h3>
+        ${upT.length ? upT.map(t=>`<div class="flex justify-between items-center p-3 bg-emerald-50 rounded-lg mb-2"><div><p class="font-medium text-slate-800 text-sm">${t.tourName}</p><p class="text-xs text-slate-500">${fmtDate(t.startDate)}${t.endDate?' → '+fmtDate(t.endDate):''} • ${(t.participants||[]).length} kisi</p></div><span class="badge ${t.status==='confirmed'?'badge-green':'badge-yellow'}">${t.status==='confirmed'?'Konfirme':'Beklemede'}</span></div>`).join('') : '<p class="text-slate-400 text-sm">Yaklasan tur yok.</p>'}
+      </div>
+    </div>
+  `;
+}
+
+
+// ============ CUSTOMERS (CRM) ============
+function renderCustomers() {
+  const customers = DB.customers();
+  return `
+    <div class="flex justify-between items-center mb-6">
+      <h1 class="text-2xl font-bold text-slate-800">Müşteri CRM</h1>
+      <button id="addCustomerBtn" class="btn-primary">+ Yeni Müşteri</button>
+    </div>
+    <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+      <table class="data-table">
+        <thead><tr><th>Ad Soyad</th><th>Telefon</th><th>E-posta</th><th>TC/Pasaport</th><th>Not</th><th>İşlem</th></tr></thead>
+        <tbody>
+          ${customers.length ? customers.map(c => `
+            <tr>
+              <td class="font-medium">${c.name}</td>
+              <td>${c.phone || '-'}</td>
+              <td>${c.email || '-'}</td>
+              <td>${c.idNumber || '-'}</td>
+              <td class="text-slate-500 text-xs">${c.notes || '-'}</td>
+              <td>
+                <button class="text-blue-600 hover:underline mr-2 text-sm" onclick="editCustomer('${c.id}')">Düzenle</button>
+                <button class="text-red-600 hover:underline text-sm" onclick="deleteCustomer('${c.id}')">Sil</button>
+              </td>
+            </tr>
+          `).join('') : '<tr><td colspan="6" class="text-center text-slate-400 py-8">Henüz müşteri eklenmemiş</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function attachCustomerHandlers() {
+  document.getElementById('addCustomerBtn').addEventListener('click', () => openCustomerForm());
+}
+
+window.editCustomer = function(id) {
+  const c = DB.customers().find(x => x.id === id);
+  if (c) openCustomerForm(c);
+};
+
+window.deleteCustomer = function(id) {
+  if (!confirm('Bu müşteriyi silmek istediğinize emin misiniz?')) return;
+  DB.saveCustomers(DB.customers().filter(c => c.id !== id));
+  toast('Müşteri silindi');
+  render();
+};
+
+function openCustomerForm(c = {}) {
+  openModal(`
+    <div class="p-6">
+      <h2 class="text-xl font-bold mb-4">${c.id ? 'Müşteri Düzenle' : 'Yeni Müşteri'}</h2>
+      <form id="customerForm" class="space-y-4">
+        <div class="grid grid-cols-2 gap-4">
+          <div><label class="label">Ad Soyad *</label><input name="name" class="input" value="${c.name || ''}" required></div>
+          <div><label class="label">Telefon</label><input name="phone" class="input" value="${c.phone || ''}"></div>
+          <div><label class="label">E-posta</label><input name="email" type="email" class="input" value="${c.email || ''}"></div>
+          <div><label class="label">TC/Pasaport No</label><input name="idNumber" class="input" value="${c.idNumber || ''}"></div>
+          <div class="col-span-2"><label class="label">Adres</label><input name="address" class="input" value="${c.address || ''}"></div>
+          <div class="col-span-2"><label class="label">Notlar</label><textarea name="notes" class="input" rows="3">${c.notes || ''}</textarea></div>
+        </div>
+        <div class="flex justify-end gap-2 pt-4 border-t">
+          <button type="button" class="btn-secondary" onclick="closeModal()">İptal</button>
+          <button type="submit" class="btn-primary">Kaydet</button>
+        </div>
+      </form>
+    </div>
+  `);
+  document.getElementById('customerForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const data = Object.fromEntries(new FormData(e.target));
+    const customers = DB.customers();
+    if (c.id) {
+      const idx = customers.findIndex(x => x.id === c.id);
+      customers[idx] = { ...c, ...data };
+    } else {
+      customers.push({ id: uid(), ...data, createdAt: new Date().toISOString() });
+    }
+    DB.saveCustomers(customers);
+    closeModal(); toast('Müşteri kaydedildi'); render();
+  });
+}
+
+// ============ BOOKINGS ============
+let bookingSearchTerm = '';
+
+function renderBookings() {
+  const allBookings = DB.bookings();
+  const bookings = bookingSearchTerm
+    ? allBookings.filter(b => (b.customerName||'').toLowerCase().includes(bookingSearchTerm.toLowerCase()))
+    : allBookings;
+  return `
+    <div class="flex justify-between items-center mb-4">
+      <h1 class="text-2xl font-bold text-slate-800">Rezervasyonlar</h1>
+      <button id="addBookingBtn" class="btn-primary">+ Yeni Rezervasyon</button>
+    </div>
+    <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-3 mb-4 flex gap-2 items-center">
+      <span class="text-slate-400">🔍</span>
+      <input id="bookingSearch" type="text" class="input" placeholder="Müşteri adı ile ara..." value="${bookingSearchTerm}" style="max-width:320px;">
+      ${bookingSearchTerm ? `<button onclick="clearBookingSearch()" class="text-xs text-slate-500 hover:text-red-500">✕ Temizle</button><span class="text-xs text-slate-400">${bookings.length} sonuç</span>` : ''}
+    </div>
+    <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-x-auto">
+      <table class="data-table">
+        <thead><tr><th>Rez. No</th><th>Müşteri</th><th>Otel</th><th>Giriş</th><th>Çıkış</th><th>Satış</th><th>Durum</th><th>İşlem</th></tr></thead>
+        <tbody>
+          ${bookings.length ? bookings.map(b => {
+            const statusBadge = b.status === 'confirmed' ? 'badge-green' : b.status === 'cancelled' ? 'badge-red' : 'badge-yellow';
+            const statusTxt = b.status === 'confirmed' ? 'Konfirme' : b.status === 'cancelled' ? 'İptal' : 'Beklemede';
+            return `
+              <tr>
+                <td class="font-mono text-xs">${b.bookingNo}</td>
+                <td class="font-medium">${b.customerName}</td>
+                <td>${b.hotelName || '-'}</td>
+                <td>${fmtDate(b.checkIn)}</td>
+                <td>${fmtDate(b.checkOut)}</td>
+                <td class="text-green-600 font-medium">${fmt(b.salePrice, b.currency)}</td>
+                <td><span class="badge ${statusBadge}">${statusTxt}</span></td>
+                <td>
+                  <button class="text-blue-600 hover:underline text-sm mr-2" onclick="editBooking('${b.id}')">Düzenle</button>
+                  <button class="text-red-600 hover:underline text-sm" onclick="deleteBooking('${b.id}')">Sil</button>
+                </td>
+              </tr>
+            `;
+          }).join('') : '<tr><td colspan="8" class="text-center text-slate-400 py-8">' + (bookingSearchTerm ? 'Arama sonucu bulunamadı' : 'Henüz rezervasyon yok') + '</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function attachBookingsHandlers() {
+  document.getElementById('addBookingBtn').addEventListener('click', () => openBookingForm());
+  const searchInp = document.getElementById('bookingSearch');
+  if (searchInp) {
+    searchInp.addEventListener('input', (e) => {
+      bookingSearchTerm = e.target.value;
+      const vc = document.getElementById('view-container');
+      vc.innerHTML = renderBookings();
+      attachBookingsHandlers();
+    });
+    searchInp.focus();
+  }
+}
+
+window.clearBookingSearch = function() {
+  bookingSearchTerm = '';
+  const vc = document.getElementById('view-container');
+  vc.innerHTML = renderBookings();
+  attachBookingsHandlers();
+};
+
+window.editBooking = function(id) {
+  const b = DB.bookings().find(x => x.id === id);
+  if (b) openBookingForm(b);
+};
+
+window.deleteBooking = function(id) {
+  const b = DB.bookings().find(x => x.id === id);
+  if (!confirm('⚠️ "' + (b?.customerName||'bu rezervasyon') + '" silinecek. Emin misiniz?')) return;
+  if (!confirm('🔴 Geri alınamaz! Gerçekten silmek istiyor musunuz?')) return;
+  DB.saveBookings(DB.bookings().filter(b => b.id !== id));
+  toast('Rezervasyon silindi'); render();
+};
+
+function openBookingForm(b = {}) {
+  const customers = DB.customers();
+  const costs = b.costs || [{ label: 'Otel maliyeti', amount: 0 }];
+
+  openModal(`
+    <div class="p-6">
+      <h2 class="text-xl font-bold mb-4">${b.id ? 'Rezervasyon Düzenle' : 'Yeni Rezervasyon'}</h2>
+      <form id="bookingForm" class="space-y-4">
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="label">Rezervasyon No</label>
+            <input name="bookingNo" class="input" value="${b.bookingNo || 'REZ-' + Date.now().toString().slice(-6)}">
+          </div>
+          <div>
+            <label class="label">Konfirmasyon No</label>
+            <input name="confirmationNo" class="input" value="${b.confirmationNo || ''}">
+          </div>
+          <div class="col-span-2">
+            <label class="label">Müşteri *</label>
+            <select name="customerId" id="bookingCustomer" class="input" required>
+              <option value="">-- Müşteri Seçin --</option>
+              ${customers.map(c => `<option value="${c.id}" ${b.customerId === c.id ? 'selected' : ''}>${c.name} (${c.phone || c.email || ''})</option>`).join('')}
+            </select>
+            <button type="button" onclick="quickAddCustomer()" class="text-xs text-blue-600 hover:underline mt-1">+ Yeni müşteri ekle</button>
+          </div>
+          <div><label class="label">Otel Adı</label><input name="hotelName" class="input" value="${b.hotelName || ''}"></div>
+          <div><label class="label">Otel Adresi</label><input name="hotelAddress" class="input" value="${b.hotelAddress || ''}"></div>
+          <div><label class="label">Giriş Tarihi *</label><input name="checkIn" type="date" class="input" value="${b.checkIn || ''}" required></div>
+          <div><label class="label">Çıkış Tarihi *</label><input name="checkOut" type="date" class="input" value="${b.checkOut || ''}" required></div>
+          <div><label class="label">Oda Tipi</label><input name="roomType" class="input" value="${b.roomType || ''}" placeholder="Örn: Double Deluxe"></div>
+          <div><label class="label">Kişi Sayısı</label><input name="paxCount" type="number" class="input" value="${b.paxCount || 1}"></div>
+          <div><label class="label">Pansiyon</label>
+            <select name="boardType" class="input">
+              ${['Oda Kahvaltı','Yarım Pansiyon','Tam Pansiyon','Her Şey Dahil','Sadece Oda'].map(x => `<option ${b.boardType === x ? 'selected' : ''}>${x}</option>`).join('')}
+            </select>
+          </div>
+          <div><label class="label">Durum</label>
+            <select name="status" class="input">
+              <option value="pending" ${b.status === 'pending' ? 'selected' : ''}>Beklemede</option>
+              <option value="confirmed" ${b.status === 'confirmed' ? 'selected' : ''}>Konfirme</option>
+              <option value="cancelled" ${b.status === 'cancelled' ? 'selected' : ''}>İptal</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="border-t pt-4">
+          <label class="label">💰 Satış Fiyatı (Müşteriden alınan)</label>
+          <div class="flex gap-2">
+            <select name="currency" id="currencySelect" class="input w-28">
+              <option value="TRY" ${(b.currency||'TRY')==='TRY'?'selected':''}>₺ TL</option>
+              <option value="USD" ${b.currency==='USD'?'selected':''}>$ USD</option>
+              <option value="EUR" ${b.currency==='EUR'?'selected':''}>€ EUR</option>
+            </select>
+            <input name="salePrice" type="number" step="0.01" id="salePriceInp" class="input flex-1" value="${b.salePrice || 0}" required>
+          </div>
+        </div>
+
+        <div class="border-t pt-4">
+          <div class="flex justify-between items-center mb-2">
+            <label class="label mb-0">📋 Maliyet Kalemleri</label>
+            <button type="button" onclick="addCostRow()" class="text-sm text-blue-600 hover:underline">+ Kalem Ekle</button>
+          </div>
+          <div id="costRows" class="space-y-2">
+            ${costs.map((c, i) => costRowHtml(c, i)).join('')}
+          </div>
+          <div class="flex justify-between mt-3 p-3 bg-slate-50 rounded-lg">
+            <span class="font-medium">Toplam Maliyet:</span>
+            <span id="totalCostDisplay" class="font-bold text-red-600">${fmt(costs.reduce((s,c)=>s+(parseFloat(c.amount)||0),0))}</span>
+          </div>
+          <div class="flex justify-between mt-2 p-3 bg-blue-50 rounded-lg">
+            <span class="font-medium">Net Kâr:</span>
+            <span id="netProfitDisplay" class="font-bold text-blue-600">${fmt((b.salePrice||0) - costs.reduce((s,c)=>s+(parseFloat(c.amount)||0),0))}</span>
+          </div>
+        </div>
+
+        <div><label class="label">Notlar</label><textarea name="notes" class="input" rows="2">${b.notes || ''}</textarea></div>
+
+        <!-- ROOMS -->
+        <div class="border-t pt-4">
+          <div class="flex justify-between items-center mb-2">
+            <label class="label mb-0">🛏 Oda / Kişi Detayları</label>
+            <button type="button" onclick="addRoomRow()" class="text-sm text-blue-600 hover:underline">+ Oda Ekle</button>
+          </div>
+          <div id="roomRows" class="space-y-2">
+            ${(b.rooms||[]).map((r,i) => roomRowHtml(r,i)).join('')}
+          </div>
+          <p class="text-xs text-slate-400 mt-1">Her oda için misafir adı, oda tipi ve kişi sayısı girin. Voucher'da görünecektir.</p>
+        </div>
+
+        <div class="flex justify-end gap-2 pt-4 border-t">
+          <button type="button" class="btn-secondary" onclick="closeModal()">İptal</button>
+          <button type="submit" class="btn-primary">Kaydet</button>
+        </div>
+      </form>
+    </div>
+  `);
+
+  const recalc = () => {
+    const rows = document.querySelectorAll('.cost-row');
+    let total = 0;
+    rows.forEach(r => {
+      total += parseFloat(r.querySelector('[name^="costAmount"]').value) || 0;
+    });
+    const sale = parseFloat(document.getElementById('salePriceInp').value) || 0;
+    const currency = document.getElementById('currencySelect').value || 'TRY';
+    document.getElementById('totalCostDisplay').textContent = fmt(total, currency);
+    document.getElementById('netProfitDisplay').textContent = fmt(sale - total, currency);
+    document.getElementById('netProfitDisplay').className = 'font-bold ' + ((sale - total) >= 0 ? 'text-blue-600' : 'text-red-600');
+  };
+
+  window.addCostRow = function() {
+    const container = document.getElementById('costRows');
+    const idx = container.children.length;
+    const div = document.createElement('div');
+    div.innerHTML = costRowHtml({ label: '', amount: 0 }, idx);
+    container.appendChild(div.firstElementChild);
+    attachCostRowListeners();
+  };
+
+  window.removeCostRow = function(btn) {
+    btn.closest('.cost-row').remove();
+    recalc();
+  };
+
+  function attachCostRowListeners() {
+    document.querySelectorAll('.cost-row input').forEach(inp => {
+      inp.oninput = recalc;
+    });
+  }
+  attachCostRowListeners();
+  document.getElementById('salePriceInp').oninput = recalc;
+  document.getElementById('currencySelect').onchange = recalc;
+
+  window.quickAddCustomer = function() {
+    const name = prompt('Müşteri adı:');
+    if (!name) return;
+    const phone = prompt('Telefon (opsiyonel):') || '';
+    const email = prompt('E-posta (opsiyonel):') || '';
+    const customers = DB.customers();
+    const newC = { id: uid(), name, phone, email, createdAt: new Date().toISOString() };
+    customers.push(newC);
+    DB.saveCustomers(customers);
+    const sel = document.getElementById('bookingCustomer');
+    const opt = document.createElement('option');
+    opt.value = newC.id; opt.textContent = name + ' (' + (phone||email) + ')'; opt.selected = true;
+    sel.appendChild(opt);
+    toast('Müşteri eklendi');
+  };
+
+  document.getElementById('bookingForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const data = Object.fromEntries(fd);
+    const costRows = document.querySelectorAll('.cost-row');
+    const costs = [];
+    costRows.forEach(r => {
+      const label = r.querySelector('[name^="costLabel"]').value.trim();
+      const amount = parseFloat(r.querySelector('[name^="costAmount"]').value) || 0;
+      if (label) costs.push({ label, amount });
+    });
+    const customer = DB.customers().find(c => c.id === data.customerId);
+    data.customerName = customer ? customer.name : '';
+    data.customerPhone = customer ? customer.phone : '';
+    data.customerEmail = customer ? customer.email : '';
+    data.costs = costs;
+    data.salePrice = parseFloat(data.salePrice) || 0;
+    data.paxCount = parseInt(data.paxCount) || 1;
+    const roomRowEls = document.querySelectorAll('.room-row');
+    const rooms = [];
+    roomRowEls.forEach((r, i) => {
+      const guestName = r.querySelector('[name^="roomGuest"]').value.trim();
+      if (guestName) rooms.push({
+        guestName,
+        roomType: r.querySelector('[name^="roomType"]').value.trim(),
+        pax: parseInt(r.querySelector('[name^="roomPax"]').value) || 1
+      });
+    });
+    data.rooms = rooms;
+
+    const bookings = DB.bookings();
+    if (b.id) {
+      const idx = bookings.findIndex(x => x.id === b.id);
+      bookings[idx] = { ...b, ...data };
+    } else {
+      bookings.push({ id: uid(), ...data, createdAt: new Date().toISOString() });
+    }
+    DB.saveBookings(bookings);
+    closeModal(); toast('Rezervasyon kaydedildi'); render();
+  });
+}
+
+function costRowHtml(c, i) {
+  return `<div class="cost-row grid grid-cols-[2fr_1fr_auto] gap-2 items-center">
+    <input name="costLabel${i}" class="input" placeholder="Açıklama (örn: Otel, Transfer, Tur)" value="${c.label || ''}">
+    <input name="costAmount${i}" type="number" step="0.01" class="input" placeholder="0.00" value="${c.amount || 0}">
+    <button type="button" onclick="removeCostRow(this)" class="text-red-500 hover:text-red-700 px-2 text-xl">✕</button>
+  </div>`;
+}
+
+function roomRowHtml(r, i) {
+  return `<div class="room-row" style="display:grid;grid-template-columns:2fr 1fr 60px auto;gap:6px;align-items:center;background:#f8fafc;padding:8px;border-radius:8px;">
+    <div><label style="font-size:10px;color:#64748b;">Misafir Adı</label><input name="roomGuest${i}" class="input" placeholder="Ad Soyad" value="${r.guestName||''}"></div>
+    <div><label style="font-size:10px;color:#64748b;">Oda Tipi</label><input name="roomType${i}" class="input" placeholder="DBL, SGL..." value="${r.roomType||''}"></div>
+    <div><label style="font-size:10px;color:#64748b;">Kişi</label><input name="roomPax${i}" type="number" min="1" class="input" value="${r.pax||1}"></div>
+    <button type="button" onclick="removeRoomRow(this)" style="color:#dc2626;font-size:18px;background:none;border:none;cursor:pointer;margin-top:14px;">✕</button>
+  </div>`;
+}
+
+window.addRoomRow = function() {
+  const container = document.getElementById('roomRows');
+  const idx = container.children.length;
+  const div = document.createElement('div');
+  div.innerHTML = roomRowHtml({}, idx);
+  container.appendChild(div.firstElementChild);
+};
+
+window.removeRoomRow = function(btn) {
+  btn.closest('.room-row').remove();
+};
+
+
+// ============ PDF FONT HELPERS ============
+// jsPDF built-in fonts (helvetica) do NOT support Turkish/special chars.
+// pdfSafe() converts Turkish chars to ASCII for PDF output only.
+// Browser display stays fully Turkish/Unicode.
+function pdfSafe(str) {
+  if (!str) return '';
+  var s = String(str);
+  var map = {
+    'Ğ':'G','ğ':'g','Ü':'U','ü':'u','Ş':'S','ş':'s',
+    'İ':'I','ı':'i','Ö':'O','ö':'o','Ç':'C','ç':'c',
+    '‘':"'",'’':"'",'“':'"','”':'"',
+    '′':"'",'″':'"','´':"'",
+    '–':'-','—':'-','−':'-',
+    'â':'a','Â':'A','î':'i','Î':'I',
+    'ô':'o','Ô':'O','û':'u','Û':'U',
+    'à':'a','á':'a','è':'e','é':'e',
+    'ê':'e','ë':'e','ï':'i','ù':'u',
+    'ú':'u','ÿ':'y','ñ':'n','Ñ':'N',
+    'ã':'a','õ':'o','å':'a','æ':'ae',
+    'Æ':'AE','ø':'o','Ø':'O',
+    '•':'-','…':'...',' ':' ','­':'','​':''
+  };
+  var result = '';
+  for (var i = 0; i < s.length; i++) {
+    var ch = s[i];
+    var code = s.charCodeAt(i);
+    if (map[ch] !== undefined) {
+      result += map[ch];
+    } else if (code < 128) {
+      result += ch;
+    } else {
+      result += '?';
+    }
+  }
+  return result;
+}
+function pdfWrap(doc, text, maxW) {
+  return doc.splitTextToSize(pdfSafe(text||''), maxW);
+}
+function pdfHeader(doc, s, title, subLine) {
+  doc.setFillColor(37,99,235); doc.rect(0,0,210,5,'F');
+  doc.setFont('helvetica','bold'); doc.setFontSize(15); doc.setTextColor(37,99,235);
+  doc.text(pdfSafe(s.agencyName||''), 14, 18);
+  doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(90,90,90);
+  doc.text(pdfSafe(s.agencyAddress||''), 14, 24);
+  doc.text(pdfSafe(s.agencyPhone||'')+' | '+pdfSafe(s.agencyEmail||''), 14, 29);
+  doc.setFont('helvetica','bold'); doc.setFontSize(14); doc.setTextColor(30,41,59);
+  doc.text(pdfSafe(title||''), 196, 18, {align:'right'});
+  if (subLine) { doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(80,80,80); doc.text(pdfSafe(subLine), 196, 25, {align:'right'}); }
+  doc.text('Date: '+new Date().toLocaleDateString('en-GB'), 196, 31, {align:'right'});
+  doc.setDrawColor(37,99,235); doc.setLineWidth(0.5); doc.line(14,38,196,38);
+}
+function pdfFooter(doc, s) {
+  doc.setDrawColor(200,200,200); doc.line(14,282,196,282);
+  doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(120,120,120);
+  doc.text(pdfSafe(s.agencyName||'')+' | '+pdfSafe(s.agencyPhone||'')+' | '+pdfSafe(s.agencyEmail||''), 105, 287, {align:'center'});
+}
+
+// ============ VOUCHERS ============
+function renderVouchers() {
+  const bookings = DB.bookings().filter(b => b.status !== 'cancelled');
+  return `
+    <h1 class="text-2xl font-bold text-slate-800 mb-6">Voucher Yönetimi</h1>
+    <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-x-auto">
+      <table class="data-table">
+        <thead><tr><th>Rez. No</th><th>Konfirm. No</th><th>Müşteri</th><th>Otel</th><th>Giriş</th><th>Çıkış</th><th>Durum</th><th>İşlem</th></tr></thead>
+        <tbody>
+          ${bookings.length ? bookings.map(b => `
+            <tr>
+              <td class="font-mono text-xs">${b.bookingNo}</td>
+              <td class="font-mono text-xs">${b.confirmationNo || '-'}</td>
+              <td class="font-medium">${b.customerName}</td>
+              <td>${b.hotelName || '-'}</td>
+              <td>${fmtDate(b.checkIn)}</td>
+              <td>${fmtDate(b.checkOut)}</td>
+              <td><span class="badge ${b.status === 'confirmed' ? 'badge-green' : 'badge-yellow'}">${b.status === 'confirmed' ? 'Konfirme' : 'Beklemede'}</span></td>
+              <td>
+                <button class="text-blue-600 hover:underline text-sm mr-2" onclick="previewVoucher('${b.id}')">Önizle</button>
+                <button class="text-green-600 hover:underline text-sm mr-2" onclick="downloadVoucherPDF('${b.id}')">PDF İndir</button>
+                <button class="text-purple-600 hover:underline text-sm" onclick="mailtoVoucher('${b.id}')">Mail Gönder</button>
+              </td>
+            </tr>
+          `).join('') : '<tr><td colspan="8" class="text-center text-slate-400 py-8">Voucher oluşturulacak rezervasyon yok</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function attachVoucherHandlers() {}
+
+window.previewVoucher = function(id, lang) {
+  lang = lang || 'en';
+  const b = DB.bookings().find(x => x.id === id);
+  const s = DB.settings();
+  const nights = b.checkIn && b.checkOut ? Math.ceil((new Date(b.checkOut) - new Date(b.checkIn)) / (1000*60*60*24)) : 0;
+
+  const L = {
+    en: {
+      title: 'HOTEL VOUCHER', guestInfo: 'GUEST INFORMATION', hotelInfo: 'HOTEL INFORMATION',
+      notes: 'IMPORTANT NOTES', name: 'Name', pax: 'Pax', phone: 'Phone', email: 'Email',
+      hotel: 'Hotel', address: 'Address', checkin: 'Check-in', checkout: 'Check-out',
+      nights: 'Nights', room: 'Room Type', board: 'Board', bookingNo: 'Booking No',
+      confNo: 'Confirmation No', date: 'Date',
+      note1: '• This voucher must be presented at hotel check-in.',
+      note2: '• Standard check-in: 14:00 | Check-out: 12:00',
+      note3: '• Contact your agency for any corrections.',
+      footer: 'Have a great holiday!', status: 'Confirmed'
+    },
+    tr: {
+      title: 'OTEL VOUCHER', guestInfo: 'MÜŞTERİ BİLGİLERİ', hotelInfo: 'OTEL BİLGİLERİ',
+      notes: 'ÖNEMLİ NOTLAR', name: 'Ad Soyad', pax: 'Kişi Sayısı', phone: 'Telefon', email: 'E-posta',
+      hotel: 'Otel', address: 'Adres', checkin: 'Giriş Tarihi', checkout: 'Çıkış Tarihi',
+      nights: 'Gece', room: 'Oda Tipi', board: 'Pansiyon', bookingNo: 'Rezervasyon No',
+      confNo: 'Konfirmasyon No', date: 'Tarih',
+      note1: '• Bu voucher otel girişinde ibraz edilmelidir.',
+      note2: '• Giriş saati: 14:00 | Çıkış saati: 12:00',
+      note3: '• Hatalı bilgi için acentenizle iletişime geçin.',
+      footer: 'İyi tatiller dileriz!', status: 'Konfirme'
+    }
+  };
+  const t = L[lang];
+
+  // Build rooms HTML if rooms exist
+  const roomsHtml = (b.rooms && b.rooms.length > 0) ? `
+    <div style="margin-bottom:14px;">
+      <h3 style="font-weight:700;background:#f1f5f9;padding:7px 10px;font-size:12px;margin-bottom:8px;">ROOM DETAILS</h3>
+      <table style="width:100%;border-collapse:collapse;font-size:12px;">
+        <thead><tr style="background:#f8fafc;"><th style="padding:5px 8px;text-align:left;border:1px solid #e2e8f0;">#</th><th style="padding:5px 8px;text-align:left;border:1px solid #e2e8f0;">${t.name}</th><th style="padding:5px 8px;text-align:left;border:1px solid #e2e8f0;">${t.room}</th><th style="padding:5px 8px;text-align:left;border:1px solid #e2e8f0;">${t.pax}</th></tr></thead>
+        <tbody>${(b.rooms||[]).map((r,i) => `<tr><td style="padding:4px 8px;border:1px solid #e2e8f0;">${i+1}</td><td style="padding:4px 8px;border:1px solid #e2e8f0;font-weight:600;">${r.guestName||'-'}</td><td style="padding:4px 8px;border:1px solid #e2e8f0;">${r.roomType||b.roomType||'-'}</td><td style="padding:4px 8px;border:1px solid #e2e8f0;">${r.pax||1}</td></tr>`).join('')}</tbody>
+      </table>
+    </div>` : '';
+
+  openModal(`
+    <div class="p-6">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+        <h2 class="text-xl font-bold">Voucher Önizleme</h2>
+        <div style="display:flex;gap:6px;">
+          <button onclick="previewVoucher('${id}','tr')" style="padding:4px 12px;border-radius:6px;font-size:12px;border:none;cursor:pointer;${lang==='tr'?'background:#2563eb;color:#fff;':'background:#e2e8f0;color:#374151;'}">🇹🇷 Türkçe</button>
+          <button onclick="previewVoucher('${id}','en')" style="padding:4px 12px;border-radius:6px;font-size:12px;border:none;cursor:pointer;${lang==='en'?'background:#2563eb;color:#fff;':'background:#e2e8f0;color:#374151;'}">🇬🇧 English</button>
+        </div>
+      </div>
+      <div style="border:2px solid #e2e8f0;padding:28px;background:#fff;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #2563eb;padding-bottom:14px;margin-bottom:18px;">
+          <div>${s.agencyLogo ? `<img src="${s.agencyLogo}" style="height:50px;margin-bottom:6px;">` : ''}
+            <h2 style="font-size:18px;font-weight:700;color:#2563eb;">${s.agencyName}</h2>
+            <p style="font-size:12px;color:#64748b;">${s.agencyAddress}</p>
+            <p style="font-size:12px;color:#64748b;">${s.agencyPhone} • ${s.agencyEmail}</p>
+          </div>
+          <div style="text-align:right;">
+            <h1 style="font-size:22px;font-weight:700;">${t.title}</h1>
+            <p style="font-size:12px;">${t.bookingNo}: <strong style="font-family:monospace;">${b.bookingNo}</strong></p>
+            <p style="font-size:12px;">${t.confNo}: <strong style="font-family:monospace;">${b.confirmationNo||'-'}</strong></p>
+            <p style="font-size:11px;color:#64748b;">${t.date}: ${new Date().toLocaleDateString(lang==='tr'?'tr-TR':'en-GB')}</p>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:14px;font-size:13px;">
+          <div>
+            <div style="background:#f1f5f9;padding:7px 10px;font-weight:700;font-size:12px;margin-bottom:8px;">${t.guestInfo}</div>
+            <div style="display:grid;gap:4px;padding:0 4px;">
+              <div><span style="color:#64748b;">${t.name}:</span> <strong>${b.customerName||'-'}</strong></div>
+              <div><span style="color:#64748b;">${t.phone}:</span> ${b.customerPhone||'-'}</div>
+              <div><span style="color:#64748b;">${t.email}:</span> ${b.customerEmail||'-'}</div>
+              <div><span style="color:#64748b;">${t.pax}:</span> <strong>${b.paxCount||1}</strong></div>
+            </div>
+          </div>
+          <div>
+            <div style="background:#f1f5f9;padding:7px 10px;font-weight:700;font-size:12px;margin-bottom:8px;">${t.hotelInfo}</div>
+            <div style="display:grid;gap:4px;padding:0 4px;">
+              <div><span style="color:#64748b;">${t.hotel}:</span> <strong>${b.hotelName||'-'}</strong></div>
+              <div><span style="color:#64748b;">${t.address}:</span> ${b.hotelAddress||'-'}</div>
+              <div><span style="color:#64748b;">${t.checkin}:</span> <strong>${fmtDate(b.checkIn)}</strong></div>
+              <div><span style="color:#64748b;">${t.checkout}:</span> <strong>${fmtDate(b.checkOut)}</strong></div>
+              <div><span style="color:#64748b;">${t.nights}:</span> ${nights} | <span style="color:#64748b;">${t.room}:</span> ${b.roomType||'-'}</div>
+              <div><span style="color:#64748b;">${t.board}:</span> ${b.boardType||'-'}</div>
+            </div>
+          </div>
+        </div>
+        ${roomsHtml}
+        <div style="background:#fffbeb;border:1px solid #fde68a;padding:10px;border-radius:6px;font-size:12px;color:#78350f;">
+          <strong>${t.notes}:</strong><br>${t.note1}<br>${t.note2}<br>${t.note3}
+          ${b.notes ? '<br>• ' + b.notes : ''}
+        </div>
+        <div style="margin-top:14px;border-top:1px solid #e2e8f0;padding-top:10px;text-align:center;font-size:11px;color:#64748b;">
+          ${s.agencyName} • ${s.agencyPhone} • ${s.agencyEmail} | ${t.footer}
+        </div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
+        <button class="btn-secondary" onclick="closeModal()">Kapat</button>
+        <button class="btn-success" onclick="downloadVoucherPDF('${id}','${lang}')">📄 PDF (${lang==='tr'?'TR':'EN'})</button>
+      </div>
+    </div>
+  `);
+};
+
+window.downloadVoucherPDF = function(id, lang) {
+  lang = lang || 'en';
+  const b = DB.bookings().find(x => x.id === id);
+  const s = DB.settings();
+  if (!b) return;
+  const nights = b.checkIn && b.checkOut ? Math.ceil((new Date(b.checkOut)-new Date(b.checkIn))/(864e5)) : 0;
+
+  const L = {
+    en: { title:'HOTEL VOUCHER', guest:'GUEST INFORMATION', hotel:'HOTEL INFORMATION',
+          notes:'IMPORTANT NOTES', name:'Name', pax:'Pax', phone:'Phone', email:'Email',
+          hotelN:'Hotel Name', addr:'Address', ci:'Check-in', co:'Check-out', nights:'Nights',
+          room:'Room Type', board:'Board Type', bNo:'Booking No', conf:'Confirmation No',
+          n1:'- This voucher must be presented at hotel check-in.',
+          n2:'- Standard check-in: 14:00 | Check-out: 12:00',
+          n3:'- Please contact your agency for any corrections.',
+          footer:'Have a great holiday!' },
+    tr: { title:'OTEL VOUCHER', guest:'MUSTERI BILGILERI', hotel:'OTEL BILGILERI',
+          notes:'ONEMLI NOTLAR', name:'Ad Soyad', pax:'Kisi Sayisi', phone:'Telefon', email:'E-posta',
+          hotelN:'Otel Adi', addr:'Adres', ci:'Giris Tarihi', co:'Cikis Tarihi', nights:'Gece Sayisi',
+          room:'Oda Tipi', board:'Pansiyon', bNo:'Rezervasyon No', conf:'Konfirmasyon No',
+          n1:'- Bu voucher otel girisinde ibraz edilmelidir.',
+          n2:'- Giris saati: 14:00 | Cikis saati: 12:00',
+          n3:'- Hatali bilgi icin acentenizle iletisime gecin.',
+          footer:'Iyi tatiller dileriz!' }
+  };
+  const t = L[lang] || L.en;
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+
+  // ── HEADER ─────────────────────────────────────────────────────────────────
+  doc.setFillColor(37, 99, 235);
+  doc.rect(0, 0, 210, 5, 'F');
+
+  // Logo varsa sol uste
+  let headerY = 22;
+  if (s.agencyLogo && s.agencyLogo.startsWith('data:image')) {
+    try {
+      const logoFmt = s.agencyLogo.indexOf('data:image/png') >= 0 ? 'PNG' : 'JPEG';
+      doc.addImage(s.agencyLogo, logoFmt, 14, 8, 30, 14);
+      headerY = 14;
+    } catch(e) {}
+  }
+
+  // Acente bilgileri
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(13);
+  doc.setTextColor(37, 99, 235);
+  doc.text(pdfSafe(s.agencyName || ''), s.agencyLogo ? 48 : 14, headerY);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8.5);
+  doc.setTextColor(80, 80, 80);
+  doc.text(pdfSafe(s.agencyAddress || ''), s.agencyLogo ? 48 : 14, headerY + 5);
+  doc.text(pdfSafe(s.agencyPhone || '') + '  |  ' + pdfSafe(s.agencyEmail || ''), s.agencyLogo ? 48 : 14, headerY + 10);
+
+  // Voucher basligi sag taraf
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(18);
+  doc.setTextColor(30, 41, 59);
+  doc.text(t.title, 196, 14, { align: 'right' });
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8.5);
+  doc.setTextColor(80, 80, 80);
+  doc.text(t.bNo + ': ' + pdfSafe(b.bookingNo || ''), 196, 21, { align: 'right' });
+  doc.text(t.conf + ': ' + pdfSafe(b.confirmationNo || '-'), 196, 26, { align: 'right' });
+  doc.text('Date: ' + new Date().toLocaleDateString('en-GB'), 196, 31, { align: 'right' });
+
+  doc.setDrawColor(37, 99, 235);
+  doc.setLineWidth(0.5);
+  doc.line(14, 38, 196, 38);
+
+  // ── MUSTERI BILGILERI ──────────────────────────────────────────────────────
+  doc.autoTable({
+    startY: 44,
+    head: [[t.guest, '']],
+    body: [
+      [t.name, pdfSafe(b.customerName || '-')],
+      [t.phone, pdfSafe(b.customerPhone || '-')],
+      [t.email, pdfSafe(b.customerEmail || '-')],
+      [t.pax, String(b.paxCount || 1)],
+    ],
+    theme: 'grid',
+    headStyles: { fillColor:[100,116,139], textColor:255, fontSize:9.5, font:'helvetica', fontStyle:'bold' },
+    bodyStyles: { fontSize:9.5, font:'helvetica' },
+    columnStyles: { 0:{ fontStyle:'bold', cellWidth:52 } },
+    margin: { left:14, right:14 },
+  });
+
+  // ── OTEL BILGILERI ─────────────────────────────────────────────────────────
+  doc.autoTable({
+    startY: doc.lastAutoTable.finalY + 5,
+    head: [[t.hotel, '']],
+    body: [
+      [t.hotelN, pdfSafe(b.hotelName || '-')],
+      [t.addr, pdfSafe(b.hotelAddress || '-')],
+      [t.ci, fmtDate(b.checkIn)],
+      [t.co, fmtDate(b.checkOut)],
+      [t.nights, String(nights)],
+      [t.room, pdfSafe(b.roomType || '-')],
+      [t.board, pdfSafe(b.boardType || '-')],
+    ],
+    theme: 'grid',
+    headStyles: { fillColor:[100,116,139], textColor:255, fontSize:9.5, font:'helvetica', fontStyle:'bold' },
+    bodyStyles: { fontSize:9.5, font:'helvetica' },
+    columnStyles: { 0:{ fontStyle:'bold', cellWidth:52 } },
+    margin: { left:14, right:14 },
+  });
+
+  // ── ODA DETAYLARI ──────────────────────────────────────────────────────────
+  if (b.rooms && b.rooms.length > 0) {
+    doc.autoTable({
+      startY: doc.lastAutoTable.finalY + 5,
+      head: [['#', t.name, t.room, t.pax]],
+      body: (b.rooms || []).map((r, i) => [String(i+1), pdfSafe(r.guestName||'-'), pdfSafe(r.roomType||b.roomType||'-'), String(r.pax||1)]),
+      theme: 'grid',
+      headStyles: { fillColor:[71,85,105], textColor:255, fontSize:8.5, font:'helvetica', fontStyle:'bold' },
+      bodyStyles: { fontSize:8.5, font:'helvetica' },
+      margin: { left:14, right:14 },
+    });
+  }
+
+  // ── ONEMLI NOTLAR ──────────────────────────────────────────────────────────
+  const y = doc.lastAutoTable.finalY + 10;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9.5);
+  doc.setTextColor(30, 41, 59);
+  doc.text(t.notes + ':', 14, y);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.setTextColor(80, 80, 80);
+  const noteLines = [t.n1, t.n2, t.n3];
+  if (b.notes) noteLines.push('- ' + pdfSafe(b.notes));
+  noteLines.forEach((n, i) => doc.text(n, 14, y + 6 + (i * 5.5)));
+
+  // ── FOOTER ─────────────────────────────────────────────────────────────────
+  doc.setDrawColor(200, 200, 200);
+  doc.line(14, 280, 196, 280);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8.5);
+  doc.setTextColor(100, 100, 100);
+  doc.text(pdfSafe(s.agencyName||'') + '  |  ' + pdfSafe(s.agencyPhone||'') + '  |  ' + pdfSafe(s.agencyEmail||''), 105, 285, { align: 'center' });
+  doc.text(t.footer, 105, 291, { align: 'center' });
+
+  doc.save('Voucher_' + pdfSafe(b.bookingNo||'') + '_' + lang.toUpperCase() + '.pdf');
+  toast('Voucher PDF indirildi (' + lang.toUpperCase() + ')');
+};
+
+window.mailtoVoucher = function(id) {
+  const b = DB.bookings().find(x => x.id === id);
+  const s = DB.settings();
+  if (!b.customerEmail) {
+    if (!confirm('Müşteri e-postası kayıtlı değil. Devam etmek ister misiniz?')) return;
+  }
+  const subject = encodeURIComponent('Rezervasyon Voucher\'ınız - ' + b.bookingNo);
+  const body = encodeURIComponent(
+    `Sayın ${b.customerName},\n\n` +
+    `Rezervasyonunuz başarıyla oluşturulmuştur. Detaylar aşağıdadır:\n\n` +
+    `Rezervasyon No: ${b.bookingNo}\n` +
+    `Konfirmasyon No: ${b.confirmationNo || '-'}\n` +
+    `Otel: ${b.hotelName || '-'}\n` +
+    `Adres: ${b.hotelAddress || '-'}\n` +
+    `Giriş: ${fmtDate(b.checkIn)}\n` +
+    `Çıkış: ${fmtDate(b.checkOut)}\n` +
+    `Oda Tipi: ${b.roomType || '-'}\n` +
+    `Pansiyon: ${b.boardType || '-'}\n` +
+    `Kişi Sayısı: ${b.paxCount || 1}\n\n` +
+    `Voucher'ın PDF halini ek olarak ayrıca gönderiyoruz.\n\n` +
+    `İyi tatiller dileriz.\n\n` +
+    `${s.agencyName}\n${s.agencyPhone}\n${s.agencyEmail}`
+  );
+  window.location.href = `mailto:${b.customerEmail || ''}?subject=${subject}&body=${body}`;
+  toast('Mail uygulaması açılıyor... PDF\'i ekleyin');
+};
+
+// ============ CALENDAR ============
+let calendarMonth = new Date().getMonth();
+let calendarYear = new Date().getFullYear();
+
+function renderCalendar() {
+  const monthNames = ['Ocak','Şubat','Mart','Nisan','Mayıs','Haziran','Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık'];
+  const dayNames = ['Pzt','Sal','Çar','Per','Cum','Cmt','Paz'];
+  const firstDay = new Date(calendarYear, calendarMonth, 1);
+  const lastDay = new Date(calendarYear, calendarMonth + 1, 0);
+  let startWeekday = firstDay.getDay() - 1; if (startWeekday < 0) startWeekday = 6;
+
+  const bookings = DB.bookings().filter(b => b.status !== 'cancelled' && b.checkIn && b.checkOut);
+  const tours = DB.tours().filter(t => t.status !== 'cancelled' && t.startDate);
+  const todayStr = new Date().toISOString().split('T')[0];
+
+  const cells = [];
+  const prevLastDay = new Date(calendarYear, calendarMonth, 0).getDate();
+  for (let i = startWeekday - 1; i >= 0; i--) cells.push({ day: prevLastDay - i, other: true });
+
+  for (let d = 1; d <= lastDay.getDate(); d++) {
+    const dateStr = new Date(calendarYear, calendarMonth, d).toISOString().split('T')[0];
+    const bookingEvents = [];
+    bookings.forEach(b => {
+      const ci = new Date(b.checkIn).toISOString().split('T')[0];
+      const co = new Date(b.checkOut).toISOString().split('T')[0];
+      if (dateStr === ci) bookingEvents.push({ type: 'in', label: b.customerName || 'Müşteri', id: b.id, hotel: b.hotelName });
+      else if (dateStr === co) bookingEvents.push({ type: 'out', label: b.customerName || 'Müşteri', id: b.id, hotel: b.hotelName });
+      else if (dateStr > ci && dateStr < co) bookingEvents.push({ type: 'stay', label: b.customerName || 'Müşteri', id: b.id, hotel: b.hotelName });
+    });
+    const tourEvents = [];
+    tours.forEach(t => {
+      const sd = new Date(t.startDate).toISOString().split('T')[0];
+      const ed = t.endDate ? new Date(t.endDate).toISOString().split('T')[0] : sd;
+      if (dateStr === sd && dateStr === ed) tourEvents.push({ type: 'ts', label: t.tourName, id: t.id });
+      else if (dateStr === sd) tourEvents.push({ type: 'ts', label: t.tourName, id: t.id });
+      else if (dateStr === ed) tourEvents.push({ type: 'te', label: t.tourName, id: t.id });
+      else if (dateStr > sd && dateStr < ed) tourEvents.push({ type: 'tmid', label: t.tourName, id: t.id });
+    });
+    cells.push({ day: d, other: false, bookingEvents, tourEvents, dateStr, isToday: dateStr === todayStr });
+  }
+  const remaining = (7 - (cells.length % 7)) % 7;
+  for (let i = 1; i <= remaining; i++) cells.push({ day: i, other: true });
+
+  // Build event lists for bottom panel
+  const allBookingEvts = [];
+  const allTourEvts = [];
+  bookings.forEach(b => {
+    const ci = new Date(b.checkIn).toISOString().split('T')[0];
+    const co = new Date(b.checkOut).toISOString().split('T')[0];
+    const ciDate = new Date(calendarYear, calendarMonth);
+    const lastDate = new Date(calendarYear, calendarMonth+1, 0);
+    const ciStr = new Date(calendarYear, calendarMonth, 1).toISOString().split('T')[0];
+    if (ci >= ciStr.slice(0,7) || co >= ciStr.slice(0,7)) {
+      allBookingEvts.push({ ...b, ci, co });
+    }
+  });
+  tours.forEach(t => {
+    const sd = new Date(t.startDate).toISOString().split('T')[0];
+    const ed = t.endDate ? new Date(t.endDate).toISOString().split('T')[0] : sd;
+    allTourEvts.push({ ...t, sd, ed });
+  });
+
+  const calCells = cells.map((c, idx) => {
+    const dow = idx % 7;
+    if (c.other) {
+      return `<div style="border:1px solid #e2e8f0;padding:3px;min-height:64px;background:#f8fafc;opacity:.4;"><span style="font-size:11px;color:#94a3b8;">${c.day}</span></div>`;
+    }
+    let bg = '#fff'; if (c.isToday) bg = '#eff6ff'; else if (dow >= 5) bg = '#fafafa';
+    const dayNumHtml = c.isToday
+      ? `<span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;background:#2563eb;color:#fff;border-radius:50%;font-size:10px;font-weight:700;">${c.day}</span>`
+      : `<span style="font-size:11px;font-weight:600;color:${dow>=5?'#94a3b8':'#374151'};">${c.day}</span>`;
+
+    // Compact event chips
+    const bHtml = (c.bookingEvents||[]).slice(0,2).map(e => {
+      const colors = { in: '#bfdbfe|#1e3a8a', out: '#fde68a|#78350f', stay: '#dbeafe|#1e40af' };
+      const [bg2, col] = (colors[e.type]||'#dbeafe|#1e40af').split('|');
+      const icon = e.type==='in'?'🏨':e.type==='out'?'🚪':'🛏';
+      return `<div onclick="editBooking('${e.id}')" title="${icon} ${e.label} — ${e.hotel||''}
+${e.type==='in'?'Giriş':e.type==='out'?'Çıkış':'Konaklama'}" style="background:${bg2};color:${col};border-radius:3px;padding:1px 3px;margin-bottom:1px;font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;display:flex;align-items:center;gap:2px;"><span>${icon}</span><span style="overflow:hidden;text-overflow:ellipsis;">${e.label}</span></div>`;
+    }).join('');
+
+    const tHtml = (c.tourEvents||[]).slice(0,2).map(e => {
+      const tColors = { ts:'#a7f3d0|#065f46', te:'#fecaca|#7f1d1d', tmid:'#d1fae5|#065f46' };
+      const [bg2, col] = (tColors[e.type]||'#d1fae5|#065f46').split('|');
+      const icon = e.type==='ts'?'✈️':e.type==='te'?'🏁':'🗺';
+      const borderL = e.type==='tmid'?'border-left:2px solid #10b981;':'';
+      return `<div onclick="editTour('${e.id}')" title="${icon} ${e.label}
+${e.type==='ts'?'Tur Başlangıç':e.type==='te'?'Tur Bitiş':'Tur Devam'}" style="background:${bg2};color:${col};border-radius:3px;padding:1px 3px;margin-bottom:1px;font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;display:flex;align-items:center;gap:2px;${borderL}"><span>${icon}</span><span style="overflow:hidden;text-overflow:ellipsis;">${e.label}</span></div>`;
+    }).join('');
+
+    const totalEvt = (c.bookingEvents||[]).length + (c.tourEvents||[]).length;
+    const more = totalEvt > 4 ? `<div style="font-size:8px;color:#94a3b8;">+${totalEvt-4}</div>` : '';
+
+    return `<div style="border:1px solid ${c.isToday?'#93c5fd':'#e2e8f0'};padding:3px;min-height:64px;background:${bg};position:relative;">
+      <div style="margin-bottom:2px;">${dayNumHtml}</div>
+      ${bHtml}${tHtml}${more}
+    </div>`;
+  }).join('');
+
+  // Build the bottom event list for this month
+  const monthStr = `${calendarYear}-${String(calendarMonth+1).padStart(2,'0')}`;
+  const monthBookings = bookings.filter(b => {
+    const ci = new Date(b.checkIn).toISOString().split('T')[0];
+    const co = new Date(b.checkOut).toISOString().split('T')[0];
+    return ci.startsWith(monthStr) || co.startsWith(monthStr);
+  }).sort((a,b) => new Date(a.checkIn) - new Date(b.checkIn));
+  const monthTours = tours.filter(t => {
+    const sd = new Date(t.startDate).toISOString().split('T')[0];
+    return sd.startsWith(monthStr) || (t.endDate && new Date(t.endDate).toISOString().split('T')[0].startsWith(monthStr));
+  }).sort((a,b) => new Date(a.startDate) - new Date(b.startDate));
+
+  return `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px;">
+      <h1 class="text-2xl font-bold text-slate-800">Takvim</h1>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <button onclick="prevMonth()" class="btn-secondary">‹</button>
+        <span style="font-size:16px;font-weight:600;padding:0 12px;">${monthNames[calendarMonth]} ${calendarYear}</span>
+        <button onclick="nextMonth()" class="btn-secondary">›</button>
+        <button onclick="todayCal()" class="btn-primary">Bugün</button>
+      </div>
+    </div>
+
+    <!-- Legend -->
+    <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:12px;font-size:11px;color:#475569;">
+      <span style="display:inline-flex;align-items:center;gap:4px;"><span>🏨</span> Giriş</span>
+      <span style="display:inline-flex;align-items:center;gap:4px;"><span>🚪</span> Çıkış</span>
+      <span style="display:inline-flex;align-items:center;gap:4px;"><span>🛏</span> Konaklama</span>
+      <span style="display:inline-flex;align-items:center;gap:4px;"><span>✈️</span> Tur Başlangıç</span>
+      <span style="display:inline-flex;align-items:center;gap:4px;"><span>🏁</span> Tur Bitiş</span>
+      <span style="display:inline-flex;align-items:center;gap:4px;"><span>🗺</span> Tur Devam</span>
+      <span style="font-size:10px;color:#94a3b8;">(Üzerine gelin: detay, tıklayın: düzenle)</span>
+    </div>
+
+    <!-- Calendar Grid -->
+    <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-3 mb-6">
+      <div style="display:grid;grid-template-columns:repeat(7,1fr);margin-bottom:4px;">
+        ${dayNames.map((d,i)=>`<div style="text-align:center;padding:6px;font-size:11px;font-weight:700;color:#475569;background:${i>=5?'#e2e8f0':'#f1f5f9'};">${d}</div>`).join('')}
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(7,1fr);">
+        ${calCells}
+      </div>
+    </div>
+
+    <!-- Bottom event lists -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
+        <h3 style="font-weight:600;font-size:14px;margin-bottom:10px;display:flex;align-items:center;gap:6px;">🏨 ${monthNames[calendarMonth]} Rezervasyonları <span style="font-size:11px;font-weight:400;color:#94a3b8;">(${monthBookings.length})</span></h3>
+        ${monthBookings.length ? `<div style="display:flex;flex-direction:column;gap:6px;">
+          ${monthBookings.map(b => `
+            <div onclick="editBooking('${b.id}')" style="padding:8px;background:#f8fafc;border-radius:8px;cursor:pointer;border-left:3px solid #3b82f6;" title="Düzenlemek için tıklayın">
+              <div style="display:flex;justify-content:space-between;align-items:center;">
+                <span style="font-weight:600;font-size:12px;">🏨 ${b.customerName||'-'}</span>
+                <span style="font-size:10px;padding:1px 6px;border-radius:999px;background:${b.status==='confirmed'?'#dcfce7':'#fef9c3'};color:${b.status==='confirmed'?'#166534':'#854d0e'};">${b.status==='confirmed'?'Konfirme':'Beklemede'}</span>
+              </div>
+              <div style="font-size:11px;color:#64748b;margin-top:2px;">${b.hotelName||''} • ${fmtDate(b.checkIn)} → ${fmtDate(b.checkOut)}</div>
+            </div>
+          `).join('')}
+        </div>` : '<p style="font-size:12px;color:#94a3b8;">Bu ay rezervasyon yok.</p>'}
+      </div>
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
+        <h3 style="font-weight:600;font-size:14px;margin-bottom:10px;display:flex;align-items:center;gap:6px;">✈️ ${monthNames[calendarMonth]} Turları <span style="font-size:11px;font-weight:400;color:#94a3b8;">(${monthTours.length})</span></h3>
+        ${monthTours.length ? `<div style="display:flex;flex-direction:column;gap:6px;">
+          ${monthTours.map(t => `
+            <div onclick="editTour('${t.id}')" style="padding:8px;background:#f0fdf4;border-radius:8px;cursor:pointer;border-left:3px solid #10b981;" title="Düzenlemek için tıklayın">
+              <div style="display:flex;justify-content:space-between;align-items:center;">
+                <span style="font-weight:600;font-size:12px;">✈️ ${t.tourName}</span>
+                <span style="font-size:10px;padding:1px 6px;border-radius:999px;background:${t.status==='confirmed'?'#dcfce7':'#fef9c3'};color:${t.status==='confirmed'?'#166534':'#854d0e'};">${t.status==='confirmed'?'Konfirme':'Beklemede'}</span>
+              </div>
+              <div style="font-size:11px;color:#64748b;margin-top:2px;">${fmtDate(t.startDate)}${t.endDate?' → '+fmtDate(t.endDate):''} • ${(t.participants||[]).length} kişi</div>
+            </div>
+          `).join('')}
+        </div>` : '<p style="font-size:12px;color:#94a3b8;">Bu ay tur yok.</p>'}
+      </div>
+    </div>
+  `;
+}
+
+function attachCalendarHandlers() {}
+window.prevMonth = function() { calendarMonth--; if (calendarMonth < 0) { calendarMonth = 11; calendarYear--; } render(); };
+window.nextMonth = function() { calendarMonth++; if (calendarMonth > 11) { calendarMonth = 0; calendarYear++; } render(); };
+window.todayCal = function() { calendarMonth = new Date().getMonth(); calendarYear = new Date().getFullYear(); render(); };
+
+// ============ REPORTS ============
+let reportTab = 'bookings';
+
+function toTL(amount, cur) {
+  const s = DB.settings();
+  if (cur === 'USD') return amount * (parseFloat(s.usdRate) || 32);
+  if (cur === 'EUR') return amount * (parseFloat(s.eurRate) || 35);
+  return amount;
+}
+
+function renderReports() {
+  const allBookings = DB.bookings();
+  const allTours = DB.tours();
+  const today = new Date();
+  const cats = DB.tourCategories();
+
+  const confB = allBookings.filter(b => b.status === 'confirmed');
+  const confT = allTours.filter(t => t.status === 'confirmed');
+
+  const thisMonthB = allBookings.filter(b => b.createdAt && new Date(b.createdAt).getMonth() === today.getMonth() && new Date(b.createdAt).getFullYear() === today.getFullYear());
+  const thisMonthT = allTours.filter(t => t.createdAt && new Date(t.createdAt).getMonth() === today.getMonth() && new Date(t.createdAt).getFullYear() === today.getFullYear());
+
+  const bRevTL = confB.reduce((s, b) => s + toTL(parseFloat(b.salePrice)||0, b.currency||'TRY'), 0);
+  const bCostTL = confB.reduce((s, b) => s + toTL(totalCost(b), b.currency||'TRY'), 0);
+  const tRevTL = confT.reduce((s, t) => s + toTL(parseFloat(t.salePrice)||0, t.currency||'TRY'), 0);
+  const tCostTL = confT.reduce((s, t) => s + toTL(tourTotalCost(t), t.currency||'TRY'), 0);
+
+  const currencies = ['TRY', 'USD', 'EUR'];
+  const sym = { TRY: '₺', USD: '$', EUR: '€' };
+
+  const isB = reportTab === 'bookings';
+
+  const bRows = confB.map(b => {
+    const cat = '';
+    return `<tr>
+      <td class="font-mono text-xs">${b.bookingNo}</td>
+      <td class="font-medium">${b.customerName || '-'}</td>
+      <td>${b.hotelName || '-'}</td>
+      <td class="text-xs">${fmtDate(b.checkIn)}</td>
+      <td class="text-green-600 font-medium">${fmt(b.salePrice, b.currency)}</td>
+      <td><span class="badge badge-blue">${b.currency || 'TRY'}</span></td>
+      <td><button class="text-blue-600 hover:underline text-xs font-medium" onclick="showBookingDetail('${b.id}')">Detay →</button></td>
+    </tr>`;
+  }).join('');
+
+  const tRows = confT.map(t => {
+    const cat = cats.find(c => c.id === t.categoryId);
+    return `<tr>
+      <td class="font-medium">${t.tourName}</td>
+      <td>${cat ? cat.name : '-'}</td>
+      <td class="text-xs">${fmtDate(t.startDate)}${t.endDate ? ' → ' + fmtDate(t.endDate) : ''}</td>
+      <td class="text-center">${(t.participants||[]).length}</td>
+      <td class="text-green-600 font-medium">${fmt(t.salePrice || 0, t.currency)}</td>
+      <td><span class="badge badge-blue">${t.currency || 'TRY'}</span></td>
+      <td><button class="text-blue-600 hover:underline text-xs font-medium" onclick="showTourDetail('${t.id}')">Detay →</button></td>
+    </tr>`;
+  }).join('');
+
+  const s = DB.settings();
+
+  return `
+    <div class="flex justify-between items-center mb-6" style="flex-wrap:wrap;gap:8px;">
+      <h1 class="text-2xl font-bold text-slate-800">Satış Raporu</h1>
+      <div class="flex gap-2" style="flex-wrap:wrap;">
+        <button onclick="exportReportExcel()" class="btn-success">📊 Excel İndir</button>
+        <button onclick="exportReportPDF()" class="btn-primary">📄 PDF İndir</button>
+      </div>
+    </div>
+
+    <!-- Summary cards -->
+    <div class="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
+      <div class="stat-card"><p class="text-slate-500 text-sm">Bu Ay Rez.</p><p class="text-3xl font-bold text-slate-800 mt-1">${thisMonthB.length}</p></div>
+      <div class="stat-card"><p class="text-slate-500 text-sm">Bu Ay Tur</p><p class="text-3xl font-bold text-slate-800 mt-1">${thisMonthT.length}</p></div>
+      <div class="stat-card"><p class="text-slate-500 text-sm">Rez. Ciro (TL)</p><p class="text-2xl font-bold text-green-600 mt-1">${fmt(bRevTL)}</p></div>
+      <div class="stat-card"><p class="text-slate-500 text-sm">Tur Ciro (TL)</p><p class="text-2xl font-bold text-green-600 mt-1">${fmt(tRevTL)}</p></div>
+      <div class="stat-card"><p class="text-slate-500 text-sm">Toplam Net Kâr (TL)</p><p class="text-2xl font-bold mt-1 ${(bRevTL-bCostTL+tRevTL-tCostTL)>=0?'text-blue-600':'text-red-600'}">${fmt(bRevTL-bCostTL+tRevTL-tCostTL)}</p></div>
+    </div>
+
+    <!-- Currency breakdown -->
+    <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5 mb-6">
+      <h3 class="font-semibold text-slate-800 mb-3">💱 Döviz Bazlı Ciro <span class="text-xs font-normal text-slate-500">(1$=${s.usdRate||32}₺ · 1€=${s.eurRate||35}₺ — Ayarlar'dan güncelleyebilirsiniz)</span></h3>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        ${currencies.map(cur => {
+          const bF = confB.filter(b => (b.currency||'TRY') === cur);
+          const tF = confT.filter(t => (t.currency||'TRY') === cur);
+          const bR = bF.reduce((s,b)=>s+(parseFloat(b.salePrice)||0),0);
+          const bC = bF.reduce((s,b)=>s+totalCost(b),0);
+          const tR = tF.reduce((s,t)=>s+(parseFloat(t.salePrice)||0),0);
+          const tC = tF.reduce((s,t)=>s+tourTotalCost(t),0);
+          const total = bR+tR, totalC = bC+tC, p = total - totalC;
+          const tlEq = toTL(Math.abs(p), cur);
+          return `<div class="border border-slate-200 rounded-xl p-4">
+            <div class="flex justify-between items-center mb-3">
+              <span class="text-lg font-bold">${sym[cur]} ${cur}</span>
+              <span class="text-xs px-2 py-1 rounded-full font-semibold ${p>=0?'bg-blue-100 text-blue-700':'bg-red-100 text-red-700'}">
+                ${p>=0?'Kâr':'Zarar'}: ${sym[cur]}${Math.abs(p).toFixed(2)}
+              </span>
+            </div>
+            <div class="text-xs space-y-1">
+              <div class="flex justify-between py-1 border-b border-slate-100"><span class="text-slate-500">🧾 Rez. Gelir</span><span class="text-green-600 font-medium">${sym[cur]}${bR.toFixed(2)}</span></div>
+              <div class="flex justify-between py-1 border-b border-slate-100"><span class="text-slate-500">🧾 Rez. Maliyet</span><span class="text-red-500 font-medium">${sym[cur]}${bC.toFixed(2)}</span></div>
+              <div class="flex justify-between py-1 border-b border-slate-100"><span class="text-slate-500">✈️ Tur Gelir</span><span class="text-green-600 font-medium">${sym[cur]}${tR.toFixed(2)}</span></div>
+              <div class="flex justify-between py-1"><span class="text-slate-500">✈️ Tur Maliyet</span><span class="text-red-500 font-medium">${sym[cur]}${tC.toFixed(2)}</span></div>
+              ${cur !== 'TRY' ? `<div class="mt-2 px-2 py-1 bg-yellow-50 rounded text-yellow-700 text-[10px]">TL karşılığı (kur ile): ≈ ${fmt(tlEq)}</div>` : ''}
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="flex gap-2 mb-4" style="flex-wrap:wrap;">
+      <button class="tab-btn ${reportTab==='bookings'?'active':''}" onclick="setReportTab('bookings')">🧾 Rezervasyonlar (${confB.length})</button>
+      <button class="tab-btn ${reportTab==='tours'?'active':''}" onclick="setReportTab('tours')">✈️ Turlar (${confT.length})</button>
+      <button class="tab-btn ${reportTab==='monthly'?'active':''}" onclick="setReportTab('monthly')">📅 Aylık Rapor</button>
+      <button class="tab-btn ${reportTab==='yearly'?'active':''}" onclick="setReportTab('yearly')">📆 Yıllık Rapor</button>
+    </div>
+
+    <style>
+      .tab-btn { padding:7px 18px;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;border:none;transition:all .15s; }
+      .tab-btn.active { background:#2563eb;color:#fff; }
+      .tab-btn:not(.active) { background:#f1f5f9;color:#475569; }
+      .tab-btn:not(.active):hover { background:#e2e8f0; }
+    </style>
+
+    <!-- Bookings tab -->
+    <div id="tabBookings" style="display:${reportTab==='bookings'?'block':'none'}">
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-x-auto">
+        <table class="data-table">
+          <thead><tr><th>Rez. No</th><th>Müşteri</th><th>Otel</th><th>Giriş</th><th>Satış Fiyatı</th><th>Döviz</th><th>Detay</th></tr></thead>
+          <tbody>${bRows || '<tr><td colspan="7" class="text-center text-slate-400 py-6">Konfirme rezervasyon yok</td></tr>'}</tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Tours tab -->
+    <div id="tabTours" style="display:${reportTab==='tours'?'block':'none'}">
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-x-auto">
+        <table class="data-table">
+          <thead><tr><th>Tur Adı</th><th>Kategori</th><th>Tarih</th><th>Katılımcı</th><th>Satış Fiyatı</th><th>Döviz</th><th>Detay</th></tr></thead>
+          <tbody>${tRows || '<tr><td colspan="7" class="text-center text-slate-400 py-6">Konfirme tur yok</td></tr>'}</tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Monthly tab -->
+    <div id="tabMonthly" style="display:${reportTab==='monthly'?'block':'none'}">
+      ${renderMonthlyReport(confB, confT)}
+    </div>
+
+    <!-- Yearly tab -->
+    <div id="tabYearly" style="display:${reportTab==='yearly'?'block':'none'}">
+      ${renderYearlyReport(confB, confT)}
+    </div>
+  `;
+}
+
+function renderMonthlyReport(confB, confT) {
+  const months = ['Ocak','Şubat','Mart','Nisan','Mayıs','Haziran','Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık'];
+  const year = new Date().getFullYear();
+  const rows = months.map((mName, mi) => {
+    const bm = confB.filter(b => b.createdAt && new Date(b.createdAt).getFullYear()===year && new Date(b.createdAt).getMonth()===mi);
+    const tm = confT.filter(t => t.createdAt && new Date(t.createdAt).getFullYear()===year && new Date(t.createdAt).getMonth()===mi);
+    const bRev = bm.reduce((s,b)=>s+toTL(parseFloat(b.salePrice)||0,b.currency||'TRY'),0);
+    const bCost = bm.reduce((s,b)=>s+toTL(totalCost(b),b.currency||'TRY'),0);
+    const tRev = tm.reduce((s,t)=>s+toTL(parseFloat(t.salePrice)||0,t.currency||'TRY'),0);
+    const tCost = tm.reduce((s,t)=>s+toTL(tourTotalCost(t),t.currency||'TRY'),0);
+    const netKar = (bRev+tRev)-(bCost+tCost);
+    if (bm.length===0 && tm.length===0) return '';
+    return `<tr>
+      <td class="font-medium">${mName} ${year}</td>
+      <td class="text-center">${bm.length}</td><td class="text-center">${tm.length}</td>
+      <td class="text-green-600 font-medium">${fmt(bRev+tRev)}</td>
+      <td class="text-red-500">${fmt(bCost+tCost)}</td>
+      <td class="font-bold ${netKar>=0?'text-blue-600':'text-red-600'}">${fmt(netKar)}</td>
+      <td class="text-xs text-slate-500">${(bRev+tRev)?((netKar/(bRev+tRev))*100).toFixed(1)+'%':'-'}</td>
+    </tr>`;
+  }).filter(Boolean).join('');
+  const totalBRev = confB.reduce((s,b)=>s+toTL(parseFloat(b.salePrice)||0,b.currency||'TRY'),0);
+  const totalBCost = confB.reduce((s,b)=>s+toTL(totalCost(b),b.currency||'TRY'),0);
+  const totalTRev = confT.reduce((s,t)=>s+toTL(parseFloat(t.salePrice)||0,t.currency||'TRY'),0);
+  const totalTCost = confT.reduce((s,t)=>s+toTL(tourTotalCost(t),t.currency||'TRY'),0);
+  const totalNet = (totalBRev+totalTRev)-(totalBCost+totalTCost);
+  return `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+    <h3 style="font-weight:600;">📅 ${year} Aylık Performans</h3>
+    <button onclick="exportMonthlyExcel()" class="btn-success" style="font-size:12px;padding:6px 12px;">📊 Excel</button>
+  </div>
+  <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-x-auto">
+    <table class="data-table">
+      <thead><tr><th>Ay</th><th>Rez.</th><th>Tur</th><th>Toplam Ciro (TL)</th><th>Toplam Maliyet</th><th>Net Kâr</th><th>Marj</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="7" style="text-align:center;color:#94a3b8;padding:20px;">Bu yıl veri yok</td></tr>'}
+        <tr style="background:#f1f5f9;font-weight:700;">
+          <td>TOPLAM</td><td class="text-center">${confB.length}</td><td class="text-center">${confT.length}</td>
+          <td class="text-green-600">${fmt(totalBRev+totalTRev)}</td><td class="text-red-500">${fmt(totalBCost+totalTCost)}</td>
+          <td class="${totalNet>=0?'text-blue-600':'text-red-600'}">${fmt(totalNet)}</td>
+          <td>${(totalBRev+totalTRev)?((totalNet/(totalBRev+totalTRev))*100).toFixed(1)+'%':'-'}</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>`;
+}
+
+function renderYearlyReport(confB, confT) {
+  const allB = DB.bookings().filter(b=>b.status==='confirmed');
+  const allT = DB.tours().filter(t=>t.status==='confirmed');
+  const years = [...new Set([
+    ...allB.map(b=>b.createdAt?new Date(b.createdAt).getFullYear():null),
+    ...allT.map(t=>t.createdAt?new Date(t.createdAt).getFullYear():null)
+  ].filter(Boolean))].sort((a,b)=>a-b);
+  if (!years.length) return '<p style="color:#94a3b8;padding:20px;">Henüz veri yok.</p>';
+  const rows = years.map(yr => {
+    const by = allB.filter(b=>b.createdAt&&new Date(b.createdAt).getFullYear()===yr);
+    const ty = allT.filter(t=>t.createdAt&&new Date(t.createdAt).getFullYear()===yr);
+    const bRev=by.reduce((s,b)=>s+toTL(parseFloat(b.salePrice)||0,b.currency||'TRY'),0);
+    const bCost=by.reduce((s,b)=>s+toTL(totalCost(b),b.currency||'TRY'),0);
+    const tRev=ty.reduce((s,t)=>s+toTL(parseFloat(t.salePrice)||0,t.currency||'TRY'),0);
+    const tCost=ty.reduce((s,t)=>s+toTL(tourTotalCost(t),t.currency||'TRY'),0);
+    const net=(bRev+tRev)-(bCost+tCost);
+    return `<tr><td class="font-bold">${yr}</td><td class="text-center">${by.length}</td><td class="text-center">${ty.length}</td>
+      <td class="text-green-600 font-medium">${fmt(bRev+tRev)}</td><td class="text-red-500">${fmt(bCost+tCost)}</td>
+      <td class="font-bold ${net>=0?'text-blue-600':'text-red-600'}">${fmt(net)}</td>
+      <td>${(bRev+tRev)?((net/(bRev+tRev))*100).toFixed(1)+'%':'-'}</td></tr>`;
+  }).join('');
+  return `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+    <h3 style="font-weight:600;">📆 Yıllık Performans</h3>
+    <button onclick="exportYearlyExcel()" class="btn-success" style="font-size:12px;padding:6px 12px;">📊 Excel</button>
+  </div>
+  <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-x-auto">
+    <table class="data-table">
+      <thead><tr><th>Yıl</th><th>Rez.</th><th>Tur</th><th>Toplam Ciro (TL)</th><th>Maliyet</th><th>Net Kâr</th><th>Marj</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </div>`;
+}
+
+window.exportMonthlyExcel = function() {
+  const months = ['Ocak','Subat','Mart','Nisan','Mayis','Haziran','Temmuz','Agustos','Eylul','Ekim','Kasim','Aralik'];
+  const year = new Date().getFullYear();
+  const confB = DB.bookings().filter(b=>b.status==='confirmed');
+  const confT = DB.tours().filter(t=>t.status==='confirmed');
+  const wb = XLSX.utils.book_new();
+  const headers = ['Ay','Rezervasyon','Tur','Toplam Ciro (TL)','Toplam Maliyet (TL)','Net Kar (TL)','Marj%'];
+  const rows = months.map((mName,mi) => {
+    const bm=confB.filter(b=>b.createdAt&&new Date(b.createdAt).getFullYear()===year&&new Date(b.createdAt).getMonth()===mi);
+    const tm=confT.filter(t=>t.createdAt&&new Date(t.createdAt).getFullYear()===year&&new Date(t.createdAt).getMonth()===mi);
+    const bRev=bm.reduce((s,b)=>s+toTL(parseFloat(b.salePrice)||0,b.currency||'TRY'),0);
+    const bCost=bm.reduce((s,b)=>s+toTL(totalCost(b),b.currency||'TRY'),0);
+    const tRev=tm.reduce((s,t)=>s+toTL(parseFloat(t.salePrice)||0,t.currency||'TRY'),0);
+    const tCost=tm.reduce((s,t)=>s+toTL(tourTotalCost(t),t.currency||'TRY'),0);
+    const net=(bRev+tRev)-(bCost+tCost), ciro=bRev+tRev;
+    return [mName+' '+year, bm.length, tm.length, parseFloat(ciro.toFixed(2)), parseFloat((bCost+tCost).toFixed(2)), parseFloat(net.toFixed(2)), ciro?((net/ciro)*100).toFixed(1)+'%':'0%'];
+  });
+  const ws = XLSX.utils.aoa_to_sheet([headers,...rows]);
+  ws['!cols']=[{wch:14},{wch:10},{wch:8},{wch:18},{wch:18},{wch:14},{wch:8}];
+  XLSX.utils.book_append_sheet(wb,ws,'Aylik Rapor');
+  XLSX.writeFile(wb,'AylikRapor_'+year+'.xlsx'); toast('Aylık Excel indirildi');
+};
+
+window.exportYearlyExcel = function() {
+  const allB=DB.bookings().filter(b=>b.status==='confirmed');
+  const allT=DB.tours().filter(t=>t.status==='confirmed');
+  const years=[...new Set([...allB.map(b=>b.createdAt?new Date(b.createdAt).getFullYear():null),...allT.map(t=>t.createdAt?new Date(t.createdAt).getFullYear():null)].filter(Boolean))].sort();
+  const wb=XLSX.utils.book_new();
+  const headers=['Yil','Rezervasyon','Tur','Toplam Ciro (TL)','Maliyet (TL)','Net Kar (TL)','Marj%'];
+  const rows=years.map(yr=>{
+    const by=allB.filter(b=>b.createdAt&&new Date(b.createdAt).getFullYear()===yr);
+    const ty=allT.filter(t=>t.createdAt&&new Date(t.createdAt).getFullYear()===yr);
+    const bRev=by.reduce((s,b)=>s+toTL(parseFloat(b.salePrice)||0,b.currency||'TRY'),0);
+    const bCost=by.reduce((s,b)=>s+toTL(totalCost(b),b.currency||'TRY'),0);
+    const tRev=ty.reduce((s,t)=>s+toTL(parseFloat(t.salePrice)||0,t.currency||'TRY'),0);
+    const tCost=ty.reduce((s,t)=>s+toTL(tourTotalCost(t),t.currency||'TRY'),0);
+    const net=(bRev+tRev)-(bCost+tCost),ciro=bRev+tRev;
+    return [yr,by.length,ty.length,parseFloat(ciro.toFixed(2)),parseFloat((bCost+tCost).toFixed(2)),parseFloat(net.toFixed(2)),ciro?((net/ciro)*100).toFixed(1)+'%':'0%'];
+  });
+  const ws=XLSX.utils.aoa_to_sheet([headers,...rows]);
+  ws['!cols']=[{wch:8},{wch:10},{wch:8},{wch:18},{wch:16},{wch:14},{wch:8}];
+  XLSX.utils.book_append_sheet(wb,ws,'Yillik Rapor');
+  XLSX.writeFile(wb,'YillikRapor.xlsx'); toast('Yıllık Excel indirildi');
+};
+
+function attachReportHandlers() {}
+
+window.setReportTab = function(tab) {
+  reportTab = tab;
+  document.getElementById('view-container').innerHTML = renderReports();
+  attachReportHandlers();
+};
+
+// Booking detail modal with all costs
+window.showBookingDetail = function(id) {
+  const b = DB.bookings().find(x => x.id === id);
+  if (!b) return;
+  const p = profit(b);
+  openModal(`
+    <div class="p-6">
+      <h2 class="text-xl font-bold mb-4">🧾 Rezervasyon Detayı — ${b.bookingNo}</h2>
+      <div class="grid grid-cols-2 gap-3 text-sm mb-4">
+        <div><span class="text-slate-500">Müşteri:</span> <strong>${b.customerName||'-'}</strong></div>
+        <div><span class="text-slate-500">Otel:</span> <strong>${b.hotelName||'-'}</strong></div>
+        <div><span class="text-slate-500">Giriş:</span> ${fmtDate(b.checkIn)}</div>
+        <div><span class="text-slate-500">Çıkış:</span> ${fmtDate(b.checkOut)}</div>
+        <div><span class="text-slate-500">Oda:</span> ${b.roomType||'-'}</div>
+        <div><span class="text-slate-500">Pansiyon:</span> ${b.boardType||'-'}</div>
+      </div>
+      <h3 class="font-semibold mb-2">📋 Maliyet Kalemleri</h3>
+      <table class="data-table mb-4">
+        <thead><tr><th>Kalem</th><th>Tutar</th><th>Döviz</th></tr></thead>
+        <tbody>
+          ${(b.costs||[]).map(c=>`<tr><td>${c.label}</td><td class="text-red-500 font-medium">${fmt(c.amount, b.currency)}</td><td>${b.currency||'TRY'}</td></tr>`).join('') || '<tr><td colspan="3" class="text-center text-slate-400 py-4">Maliyet kalemi yok</td></tr>'}
+        </tbody>
+      </table>
+      <div class="grid grid-cols-3 gap-3 mb-5">
+        <div class="p-3 bg-green-50 rounded-lg text-center"><p class="text-xs text-slate-500">Satış Fiyatı</p><p class="font-bold text-green-600">${fmt(b.salePrice, b.currency)}</p></div>
+        <div class="p-3 bg-red-50 rounded-lg text-center"><p class="text-xs text-slate-500">Toplam Maliyet</p><p class="font-bold text-red-500">${fmt(totalCost(b), b.currency)}</p></div>
+        <div class="p-3 ${p>=0?'bg-blue-50':'bg-red-50'} rounded-lg text-center"><p class="text-xs text-slate-500">Net Kâr</p><p class="font-bold ${p>=0?'text-blue-600':'text-red-600'}">${fmt(p, b.currency)}</p></div>
+      </div>
+      <div class="flex justify-end gap-2">
+        <button class="btn-secondary" onclick="closeModal()">Kapat</button>
+        <button class="btn-success" onclick="exportBookingDetailExcel('${b.id}'); closeModal();">📊 Excel İndir</button>
+      </div>
+    </div>
+  `);
+};
+
+// Tour detail modal with all costs
+window.showTourDetail = function(id) {
+  const t = DB.tours().find(x => x.id === id);
+  if (!t) return;
+  const p = tourProfit(t);
+  const cats = DB.tourCategories();
+  const cat = cats.find(c => c.id === t.categoryId);
+  openModal(`
+    <div class="p-6">
+      <h2 class="text-xl font-bold mb-4">✈️ Tur Detayı — ${t.tourName}</h2>
+      <div class="grid grid-cols-2 gap-3 text-sm mb-4">
+        <div><span class="text-slate-500">Kategori:</span> ${cat?cat.name:'-'}</div>
+        <div><span class="text-slate-500">Tür:</span> ${t.tourType==='domestic'?'🇹🇷 Yurt İçi':'🌍 Yurt Dışı'}</div>
+        <div><span class="text-slate-500">Başlangıç:</span> ${fmtDate(t.startDate)}</div>
+        <div><span class="text-slate-500">Bitiş:</span> ${fmtDate(t.endDate)||'-'}</div>
+        <div><span class="text-slate-500">Katılımcı:</span> ${(t.participants||[]).length} kişi</div>
+        <div><span class="text-slate-500">Durum:</span> ${t.status==='confirmed'?'Konfirme':t.status==='cancelled'?'İptal':'Beklemede'}</div>
+      </div>
+      <h3 class="font-semibold mb-2">📋 Maliyet Kalemleri</h3>
+      <table class="data-table mb-4">
+        <thead><tr><th>Kalem</th><th>Tutar</th><th>Döviz</th></tr></thead>
+        <tbody>
+          ${(t.costs||[]).map(c=>`<tr><td>${c.label}</td><td class="text-red-500 font-medium">${fmt(c.amount, t.currency)}</td><td>${t.currency||'TRY'}</td></tr>`).join('') || '<tr><td colspan="3" class="text-center text-slate-400 py-4">Maliyet kalemi yok</td></tr>'}
+        </tbody>
+      </table>
+      <div class="grid grid-cols-3 gap-3 mb-5">
+        <div class="p-3 bg-green-50 rounded-lg text-center"><p class="text-xs text-slate-500">Satış Fiyatı</p><p class="font-bold text-green-600">${fmt(t.salePrice||0, t.currency)}</p></div>
+        <div class="p-3 bg-red-50 rounded-lg text-center"><p class="text-xs text-slate-500">Toplam Maliyet</p><p class="font-bold text-red-500">${fmt(tourTotalCost(t), t.currency)}</p></div>
+        <div class="p-3 ${p>=0?'bg-blue-50':'bg-red-50'} rounded-lg text-center"><p class="text-xs text-slate-500">Net Kâr</p><p class="font-bold ${p>=0?'text-blue-600':'text-red-600'}">${fmt(p, t.currency)}</p></div>
+      </div>
+      <div class="flex justify-end gap-2">
+        <button class="btn-secondary" onclick="closeModal()">Kapat</button>
+        <button class="btn-success" onclick="exportTourDetailExcel('${t.id}'); closeModal();">📊 Excel İndir</button>
+      </div>
+    </div>
+  `);
+};
+
+// Excel exports for detail modals
+window.exportBookingDetailExcel = function(id) {
+  const b = DB.bookings().find(x => x.id === id);
+  if (!b) return;
+  const p = profit(b);
+  const wb = XLSX.utils.book_new();
+  const wsData = [
+    ['Rezervasyon Detay Raporu'], [''],
+    ['Rez. No', b.bookingNo], ['Musteri', b.customerName||'-'],
+    ['Otel', b.hotelName||'-'], ['Giris', fmtDate(b.checkIn)],
+    ['Cikis', fmtDate(b.checkOut)], ['Oda', b.roomType||'-'],
+    ['Pansiyon', b.boardType||'-'], ['Doviez', b.currency||'TRY'], [''],
+    ['MALIYET KALEMLERI', 'Tutar', 'Doviz'],
+    ...(b.costs||[]).map(c => [c.label, c.amount, b.currency||'TRY']),
+    [''],
+    ['Satis Fiyati', b.salePrice||0, b.currency||'TRY'],
+    ['Toplam Maliyet', totalCost(b), b.currency||'TRY'],
+    ['Net Kar', p, b.currency||'TRY'],
+    ['Net Kar (TL)', toTL(p, b.currency||'TRY'), 'TRY'],
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(wsData);
+  ws['!cols'] = [{wch:25},{wch:18},{wch:8}];
+  XLSX.utils.book_append_sheet(wb, ws, 'Rezervasyon Detay');
+  XLSX.writeFile(wb, 'RezDetay_' + b.bookingNo + '_' + new Date().toISOString().split('T')[0] + '.xlsx');
+  toast('Excel indirildi');
+};
+
+window.exportTourDetailExcel = function(id) {
+  const t = DB.tours().find(x => x.id === id);
+  if (!t) return;
+  const p = tourProfit(t);
+  const wb = XLSX.utils.book_new();
+  const wsData = [
+    ['Tur Detay Raporu'], [''],
+    ['Tur Adi', t.tourName],
+    ['Tur Turu', t.tourType==='domestic'?'Yurt Ici':'Yurt Disi'],
+    ['Baslangic', fmtDate(t.startDate)], ['Bitis', fmtDate(t.endDate)||'-'],
+    ['Katilimci', (t.participants||[]).length], ['Doviz', t.currency||'TRY'], [''],
+    ['MALIYET KALEMLERI', 'Tutar', 'Doviz'],
+    ...(t.costs||[]).map(c => [c.label, c.amount, t.currency||'TRY']),
+    [''],
+    ['Satis Fiyati', t.salePrice||0, t.currency||'TRY'],
+    ['Toplam Maliyet', tourTotalCost(t), t.currency||'TRY'],
+    ['Net Kar', p, t.currency||'TRY'],
+    ['Net Kar (TL)', toTL(p, t.currency||'TRY'), 'TRY'],
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(wsData);
+  ws['!cols'] = [{wch:25},{wch:18},{wch:8}];
+  XLSX.utils.book_append_sheet(wb, ws, 'Tur Detay');
+  XLSX.writeFile(wb, 'TurDetay_' + (t.tourName||'Tur').replace(/\s+/g,'_') + '_' + new Date().toISOString().split('T')[0] + '.xlsx');
+  toast('Excel indirildi');
+};
+
+// Full report Excel (both tabs)
+window.exportReportExcel = function() {
+  const confB = DB.bookings().filter(b => b.status === 'confirmed');
+  const confT = DB.tours().filter(t => t.status === 'confirmed');
+  const cats = DB.tourCategories();
+  const wb = XLSX.utils.book_new();
+
+  // Bookings sheet
+  const bHeaders = ['Rez. No','Musteri','Otel','Giris','Cikis','Satis Fiyati','Doviz','Toplam Maliyet','Net Kar','Net Kar (TL)','Marj%'];
+  const bRows = confB.map(b => {
+    const tc = totalCost(b), p = profit(b);
+    return [b.bookingNo, b.customerName||'-', b.hotelName||'-', fmtDate(b.checkIn), fmtDate(b.checkOut),
+      b.salePrice||0, b.currency||'TRY', tc, p, toTL(p, b.currency||'TRY'),
+      b.salePrice ? ((p/b.salePrice)*100).toFixed(1)+'%' : '0%'];
+  });
+  const wsB = XLSX.utils.aoa_to_sheet([bHeaders, ...bRows]);
+  wsB['!cols'] = [{wch:12},{wch:20},{wch:20},{wch:11},{wch:11},{wch:14},{wch:7},{wch:14},{wch:12},{wch:14},{wch:8}];
+  XLSX.utils.book_append_sheet(wb, wsB, 'Rezervasyonlar');
+
+  // Tours sheet
+  const tHeaders = ['Tur Adi','Kategori','Baslangic','Bitis','Katilimci','Satis Fiyati','Doviz','Toplam Maliyet','Net Kar','Net Kar (TL)'];
+  const tRows = confT.map(t => {
+    const cat = cats.find(c => c.id === t.categoryId);
+    const tc = tourTotalCost(t), p = tourProfit(t);
+    return [t.tourName, cat?cat.name:'-', fmtDate(t.startDate), fmtDate(t.endDate)||'-',
+      (t.participants||[]).length, t.salePrice||0, t.currency||'TRY', tc, p, toTL(p, t.currency||'TRY')];
+  });
+  const wsT = XLSX.utils.aoa_to_sheet([tHeaders, ...tRows]);
+  wsT['!cols'] = [{wch:25},{wch:14},{wch:11},{wch:11},{wch:9},{wch:14},{wch:7},{wch:14},{wch:12},{wch:14}];
+  XLSX.utils.book_append_sheet(wb, wsT, 'Turlar');
+
+  XLSX.writeFile(wb, 'SatisRaporu_' + new Date().toISOString().split('T')[0] + '.xlsx');
+  toast('Excel raporu indirildi');
+};
+
+window.exportReportPDF = function() {
+  const {jsPDF} = window.jspdf;
+  const doc = new jsPDF();
+  const s = DB.settings();
+  const confB = DB.bookings().filter(b=>b.status==='confirmed');
+  const confT = DB.tours().filter(t=>t.status==='confirmed');
+  pdfHeader(doc, s, 'SATIS RAPORU', new Date().toLocaleDateString('tr-TR'));
+  if (confB.length) {
+    doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(37,99,235);
+    doc.text('REZERVASYONLAR ('+confB.length+')', 14, 45);
+    doc.autoTable({ startY:48,
+      head:[['Rez.No','Musteri','Otel','Giris','Satis','Maliyet','Kar']],
+      body:confB.map(b=>[pdfSafe(b.bookingNo),pdfSafe(b.customerName||'-'),pdfSafe(b.hotelName||'-'),fmtDate(b.checkIn),fmt(b.salePrice,b.currency),fmt(totalCost(b),b.currency),fmt(profit(b),b.currency)]),
+      theme:'grid', headStyles:{fillColor:[37,99,235],font:'helvetica',fontSize:7.5,textColor:255,fontStyle:'bold'},
+      bodyStyles:{fontSize:7.5,font:'helvetica'} });
+  }
+  if (confT.length) {
+    const sy = confB.length ? doc.lastAutoTable.finalY+8 : 45;
+    if (sy>240) doc.addPage();
+    const ty = sy>240?20:sy;
+    doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(37,99,235);
+    doc.text('TURLAR ('+confT.length+')', 14, ty);
+    doc.autoTable({ startY:ty+4,
+      head:[['Tur Adi','Baslangic','Bitis','Katilimci','Satis','Maliyet','Kar']],
+      body:confT.map(t=>[pdfSafe(t.tourName),fmtDate(t.startDate),fmtDate(t.endDate)||'-',String((t.participants||[]).length),fmt(t.salePrice||0,t.currency),fmt(tourTotalCost(t),t.currency),fmt(tourProfit(t),t.currency)]),
+      theme:'grid', headStyles:{fillColor:[37,99,235],font:'helvetica',fontSize:7.5,textColor:255,fontStyle:'bold'},
+      bodyStyles:{fontSize:7.5,font:'helvetica'} });
+  }
+  pdfFooter(doc, s);
+  doc.save('SatisRaporu_'+new Date().toISOString().split('T')[0]+'.pdf');
+  toast('Rapor PDF indirildi');
+};
+
+// ============ TOURS ============
+function renderTours() {
+  const categories = DB.tourCategories();
+  const tours = DB.tours();
+
+  return `
+    <div class="flex justify-between items-center mb-6">
+      <h1 class="text-2xl font-bold text-slate-800">✈️ Tur Yönetimi</h1>
+      <div class="flex gap-2">
+        <button id="addCategoryBtn" class="btn-secondary">+ Kategori Ekle</button>
+        <button id="addTourBtn" class="btn-primary">+ Yeni Tur</button>
+      </div>
+    </div>
+
+    <!-- Kategoriler -->
+    <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5 mb-6">
+      <h3 class="font-semibold text-slate-800 mb-3">📂 Tur Kategorileri</h3>
+      ${categories.length ? `
+        <div class="flex flex-wrap gap-2">
+          ${categories.map(cat => `
+            <div class="flex items-center gap-1 px-3 py-1.5 rounded-full text-sm font-medium ${cat.type === 'domestic' ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800'}">
+              ${cat.type === 'domestic' ? '🇹🇷' : '🌍'} ${cat.name}
+              <button onclick="editCategory('${cat.id}')" class="ml-1 text-xs opacity-60 hover:opacity-100">✏️</button>
+              <button onclick="deleteCategory('${cat.id}')" class="ml-0.5 text-xs opacity-60 hover:opacity-100 text-red-600">✕</button>
+            </div>
+          `).join('')}
+        </div>
+      ` : '<p class="text-slate-400 text-sm">Henüz kategori eklenmemiş. Önce bir kategori ekleyin.</p>'}
+    </div>
+
+    <!-- Turlar -->
+    <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-x-auto">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Tur Adı</th>
+            <th>Kategori</th>
+            <th>Tür</th>
+            <th>Tarih</th>
+            <th>Katılımcı</th>
+            <th>Durum</th>
+            <th>İşlem</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${tours.length ? tours.map(t => {
+            const cat = categories.find(c => c.id === t.categoryId);
+            return `
+              <tr>
+                <td class="font-medium">${t.tourName}</td>
+                <td>${cat ? cat.name : '-'}</td>
+                <td><span class="badge ${t.tourType === 'domestic' ? 'badge-green' : 'badge-blue'}">${t.tourType === 'domestic' ? '🇹🇷 Yurt İçi' : '🌍 Yurt Dışı'}</span></td>
+                <td class="text-xs">${fmtDate(t.startDate)}${t.endDate ? ' → ' + fmtDate(t.endDate) : ''}</td>
+                <td class="text-center">${(t.participants || []).length} kişi</td>
+                <td><span class="badge ${t.status === 'confirmed' ? 'badge-green' : t.status === 'cancelled' ? 'badge-red' : 'badge-yellow'}">${t.status === 'confirmed' ? 'Konfirme' : t.status === 'cancelled' ? 'İptal' : 'Beklemede'}</span></td>
+                <td>
+                  <button class="text-blue-600 hover:underline text-sm mr-2" onclick="editTour('${t.id}')">Düzenle</button>
+                  <button class="text-purple-600 hover:underline text-sm mr-2" onclick="manageTourParticipants('${t.id}')">Katılımcılar</button>
+                  <button class="text-red-600 hover:underline text-sm" onclick="deleteTour('${t.id}')">Sil</button>
+                </td>
+              </tr>
+            `;
+          }).join('') : '<tr><td colspan="7" class="text-center text-slate-400 py-8">Henüz tur eklenmemiş</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function attachToursHandlers() {
+  document.getElementById('addCategoryBtn').addEventListener('click', () => openCategoryForm());
+  document.getElementById('addTourBtn').addEventListener('click', () => openTourForm());
+}
+
+function openCategoryForm(cat = {}) {
+  openModal(`
+    <div class="p-6">
+      <h2 class="text-xl font-bold mb-4">${cat.id ? 'Kategori Düzenle' : 'Yeni Kategori'}</h2>
+      <form id="categoryForm" class="space-y-4">
+        <div>
+          <label class="label">Kategori Adı *</label>
+          <input name="name" class="input" value="${cat.name || ''}" placeholder="Örn: Ege Turu, Avrupa Turu..." required>
+        </div>
+        <div>
+          <label class="label">Tur Türü *</label>
+          <select name="type" class="input">
+            <option value="domestic" ${(cat.type||'domestic')==='domestic'?'selected':''}>🇹🇷 Yurt İçi</option>
+            <option value="international" ${cat.type==='international'?'selected':''}>🌍 Yurt Dışı</option>
+          </select>
+        </div>
+        <div class="flex justify-end gap-2 pt-4 border-t">
+          <button type="button" class="btn-secondary" onclick="closeModal()">İptal</button>
+          <button type="submit" class="btn-primary">Kaydet</button>
+        </div>
+      </form>
+    </div>
+  `);
+  document.getElementById('categoryForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const data = Object.fromEntries(new FormData(e.target));
+    const cats = DB.tourCategories();
+    if (cat.id) {
+      const idx = cats.findIndex(c => c.id === cat.id);
+      cats[idx] = { ...cat, ...data };
+    } else {
+      cats.push({ id: uid(), ...data });
+    }
+    DB.saveTourCategories(cats);
+    closeModal(); toast('Kategori kaydedildi'); render();
+  });
+}
+
+window.editCategory = function(id) {
+  const cat = DB.tourCategories().find(c => c.id === id);
+  if (cat) openCategoryForm(cat);
+};
+
+window.deleteCategory = function(id) {
+  const cat = DB.tourCategories().find(x => x.id === id);
+  if (!confirm('⚠️ "' + (cat?.name||'bu kategori') + '" silinecek. Emin misiniz?')) return;
+  if (!confirm('🔴 Geri alınamaz! Gerçekten silmek istiyor musunuz?')) return;
+  DB.saveTourCategories(DB.tourCategories().filter(c => c.id !== id));
+  toast('Kategori silindi'); render();
+};
+
+function openTourForm(t = {}) {
+  const cats = DB.tourCategories();
+  const tourCosts = t.costs || [{ label: 'Rehber ücreti', amount: 0 }];
+
+  openModal(`
+    <div class="p-6">
+      <h2 class="text-xl font-bold mb-4">${t.id ? 'Tur Düzenle' : 'Yeni Tur'}</h2>
+      <form id="tourForm" class="space-y-4">
+        <div class="grid grid-cols-2 gap-4">
+          <div class="col-span-2">
+            <label class="label">Tur Adı *</label>
+            <input name="tourName" class="input" value="${t.tourName || ''}" required placeholder="Örn: Kapadokya 3 Gece Turu">
+          </div>
+          <div>
+            <label class="label">Tur Türü *</label>
+            <select name="tourType" class="input" id="tourTypeSelect">
+              <option value="domestic" ${(t.tourType||'domestic')==='domestic'?'selected':''}>🇹🇷 Yurt İçi</option>
+              <option value="international" ${t.tourType==='international'?'selected':''}>🌍 Yurt Dışı</option>
+            </select>
+          </div>
+          <div>
+            <label class="label">Kategori</label>
+            <select name="categoryId" class="input">
+              <option value="">-- Kategori Seçin --</option>
+              ${cats.map(c => `<option value="${c.id}" ${t.categoryId===c.id?'selected':''}>${c.type==='domestic'?'🇹🇷':'🌍'} ${c.name}</option>`).join('')}
+            </select>
+          </div>
+          <div>
+            <label class="label">Başlangıç Tarihi</label>
+            <input name="startDate" type="date" class="input" value="${t.startDate || ''}">
+          </div>
+          <div>
+            <label class="label">Bitiş Tarihi</label>
+            <input name="endDate" type="date" class="input" value="${t.endDate || ''}">
+          </div>
+          <div>
+            <label class="label">Durum</label>
+            <select name="status" class="input">
+              <option value="pending" ${(t.status||'pending')==='pending'?'selected':''}>Beklemede</option>
+              <option value="confirmed" ${t.status==='confirmed'?'selected':''}>Konfirme</option>
+              <option value="cancelled" ${t.status==='cancelled'?'selected':''}>İptal</option>
+            </select>
+          </div>
+          <div>
+            <label class="label">Döviz</label>
+            <select name="currency" id="tourCurrencySelect" class="input">
+              <option value="TRY" ${(t.currency||'TRY')==='TRY'?'selected':''}>₺ TL</option>
+              <option value="USD" ${t.currency==='USD'?'selected':''}>$ USD</option>
+              <option value="EUR" ${t.currency==='EUR'?'selected':''}>€ EUR</option>
+            </select>
+          </div>
+          <div class="col-span-2">
+            <label class="label">💰 Satış Fiyatı (Müşteriden Alınan)</label>
+            <input name="salePrice" type="number" step="0.01" id="tourSalePriceInp" class="input" value="${t.salePrice || 0}">
+          </div>
+          <div class="col-span-2">
+            <label class="label">Notlar</label>
+            <textarea name="notes" class="input" rows="2">${t.notes || ''}</textarea>
+          </div>
+        </div>
+
+        <!-- Cost Items -->
+        <div class="border-t pt-4">
+          <div class="flex justify-between items-center mb-2">
+            <label class="label mb-0">📋 Maliyet Kalemleri</label>
+            <button type="button" onclick="addTourCostRow()" class="text-sm text-blue-600 hover:underline">+ Kalem Ekle</button>
+          </div>
+          <div id="tourCostRows" class="space-y-2">
+            ${tourCosts.map((c, i) => tourCostRowHtml(c, i)).join('')}
+          </div>
+          <div class="flex justify-between mt-3 p-3 bg-slate-50 rounded-lg">
+            <span class="font-medium text-sm">Toplam Maliyet:</span>
+            <span id="tourTotalCostDisplay" class="font-bold text-red-600">${fmt(tourCosts.reduce((s,c)=>s+(parseFloat(c.amount)||0),0), t.currency||'TRY')}</span>
+          </div>
+          <div class="flex justify-between mt-2 p-3 bg-blue-50 rounded-lg">
+            <span class="font-medium text-sm">Net Kâr:</span>
+            <span id="tourNetProfitDisplay" class="font-bold text-blue-600">${fmt((t.salePrice||0) - tourCosts.reduce((s,c)=>s+(parseFloat(c.amount)||0),0), t.currency||'TRY')}</span>
+          </div>
+        </div>
+
+        <div class="flex justify-end gap-2 pt-4 border-t">
+          <button type="button" class="btn-secondary" onclick="closeModal()">İptal</button>
+          <button type="submit" class="btn-primary">Kaydet</button>
+        </div>
+      </form>
+    </div>
+  `);
+
+  const recalcTour = () => {
+    const rows = document.querySelectorAll('.tour-cost-row');
+    let total = 0;
+    rows.forEach(r => { total += parseFloat(r.querySelector('[name^="tourCostAmount"]').value) || 0; });
+    const sale = parseFloat(document.getElementById('tourSalePriceInp').value) || 0;
+    const currency = document.getElementById('tourCurrencySelect').value || 'TRY';
+    document.getElementById('tourTotalCostDisplay').textContent = fmt(total, currency);
+    document.getElementById('tourNetProfitDisplay').textContent = fmt(sale - total, currency);
+    document.getElementById('tourNetProfitDisplay').className = 'font-bold ' + ((sale - total) >= 0 ? 'text-blue-600' : 'text-red-600');
+  };
+
+  window.addTourCostRow = function() {
+    const container = document.getElementById('tourCostRows');
+    const idx = container.children.length;
+    const div = document.createElement('div');
+    div.innerHTML = tourCostRowHtml({ label: '', amount: 0 }, idx);
+    container.appendChild(div.firstElementChild);
+    attachTourCostListeners();
+  };
+
+  window.removeTourCostRow = function(btn) {
+    btn.closest('.tour-cost-row').remove();
+    recalcTour();
+  };
+
+  function attachTourCostListeners() {
+    document.querySelectorAll('.tour-cost-row input').forEach(inp => { inp.oninput = recalcTour; });
+  }
+  attachTourCostListeners();
+  document.getElementById('tourSalePriceInp').oninput = recalcTour;
+  document.getElementById('tourCurrencySelect').onchange = recalcTour;
+
+  document.getElementById('tourForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const data = Object.fromEntries(new FormData(e.target));
+    const costRows = document.querySelectorAll('.tour-cost-row');
+    const costs = [];
+    costRows.forEach(r => {
+      const label = r.querySelector('[name^="tourCostLabel"]').value.trim();
+      const amount = parseFloat(r.querySelector('[name^="tourCostAmount"]').value) || 0;
+      if (label) costs.push({ label, amount });
+    });
+    data.costs = costs;
+    data.salePrice = parseFloat(data.salePrice) || 0;
+    const tours = DB.tours();
+    if (t.id) {
+      const idx = tours.findIndex(x => x.id === t.id);
+      tours[idx] = { ...t, ...data, participants: t.participants || [] };
+    } else {
+      tours.push({ id: uid(), ...data, participants: [], createdAt: new Date().toISOString() });
+    }
+    DB.saveTours(tours);
+    closeModal(); toast('Tur kaydedildi'); render();
+  });
+}
+
+function tourCostRowHtml(c, i) {
+  return `<div class="tour-cost-row grid grid-cols-[2fr_1fr_auto] gap-2 items-center">
+    <input name="tourCostLabel${i}" class="input" placeholder="Açıklama (örn: Otel, Rehber, Ulaşım)" value="${c.label || ''}">
+    <input name="tourCostAmount${i}" type="number" step="0.01" class="input" placeholder="0.00" value="${c.amount || 0}">
+    <button type="button" onclick="removeTourCostRow(this)" class="text-red-500 hover:text-red-700 px-2 text-xl">✕</button>
+  </div>`;
+}
+
+window.editTour = function(id) {
+  const t = DB.tours().find(x => x.id === id);
+  if (t) openTourForm(t);
+};
+
+window.deleteTour = function(id) {
+  const t = DB.tours().find(x => x.id === id);
+  if (!confirm('⚠️ "' + (t?.tourName||'bu tur') + '" silinecek. Emin misiniz?')) return;
+  if (!confirm('🔴 Geri alınamaz! Gerçekten silmek istiyor musunuz?')) return;
+  DB.saveTours(DB.tours().filter(t => t.id !== id));
+  toast('Tur silindi'); render();
+};
+
+window.manageTourParticipants = function(tourId) {
+  const tours = DB.tours();
+  const t = tours.find(x => x.id === tourId);
+  if (!t) return;
+  const participants = t.participants || [];
+
+  openModal(`
+    <div class="p-6">
+      <div class="flex justify-between items-center mb-4">
+        <h2 class="text-xl font-bold">👥 Katılımcılar — ${t.tourName}</h2>
+        <span class="badge ${t.tourType === 'domestic' ? 'badge-green' : 'badge-blue'}">${t.tourType === 'domestic' ? '🇹🇷 Yurt İçi' : '🌍 Yurt Dışı'}</span>
+      </div>
+      <div id="participantList" class="space-y-3 mb-4 max-h-[50vh] overflow-y-auto pr-1">
+        ${participants.length ? participants.map((p, i) => participantCardHtml(p, i, t.tourType)).join('') : '<p class="text-slate-400 text-sm text-center py-4">Henüz katılımcı eklenmemiş</p>'}
+      </div>
+      <div class="flex justify-between items-center border-t pt-4">
+        <div class="flex gap-2">
+          <button type="button" onclick="addParticipantRow('${tourId}', '${t.tourType}')" class="btn-secondary">+ Katılımcı Ekle</button>
+          <button type="button" onclick="exportParticipantsExcel('${tourId}')" class="btn-success">📊 Excel İndir</button>
+        </div>
+        <div class="flex gap-2">
+          <button type="button" class="btn-secondary" onclick="closeModal()">Kapat</button>
+          <button type="button" onclick="saveParticipants('${tourId}')" class="btn-primary">💾 Kaydet</button>
+        </div>
+      </div>
+    </div>
+  `);
+};
+
+function participantCardHtml(p, i, tourType) {
+  const isIntl = tourType === 'international';
+  return `
+    <div class="participant-card border border-slate-200 rounded-lg p-4 bg-slate-50" data-idx="${i}">
+      <div class="flex justify-between items-center mb-3">
+        <span class="font-semibold text-slate-700 text-sm">Katılımcı ${i+1}</span>
+        <button type="button" onclick="removeParticipantCard(this)" class="text-red-500 hover:text-red-700 text-sm">✕ Kaldır</button>
+      </div>
+      <div class="grid grid-cols-2 gap-3 text-sm">
+        <div class="col-span-2">
+          <label class="label">Ad Soyad *</label>
+          <input class="input p-name" placeholder="Ad Soyad" value="${p.name || ''}">
+        </div>
+        <div>
+          <label class="label">TC Kimlik No</label>
+          <input class="input p-tc" placeholder="12345678901" value="${p.tc || ''}" maxlength="11">
+        </div>
+        <div>
+          <label class="label">Doğum Tarihi</label>
+          <input type="date" class="input p-birth" value="${p.birthDate || ''}">
+        </div>
+        <div>
+          <label class="label">Telefon</label>
+          <input class="input p-phone" placeholder="+90 5XX XXX XX XX" value="${p.phone || ''}">
+        </div>
+        <div>
+          <label class="label">Pasaport No</label>
+          <input class="input p-passport" placeholder="U12345678" value="${p.passportNo || ''}" ${!isIntl ? '' : ''}>
+        </div>
+        <div>
+          <label class="label">Pasaport Geçerlilik Tarihi</label>
+          <input type="date" class="input p-passexp" value="${p.passportExpiry || ''}">
+        </div>
+        <div>
+          <label class="label">Vize</label>
+          <select class="input p-visa">
+            <option value="" ${!p.visa?'selected':''}>-- Seçin --</option>
+            <option value="yes" ${p.visa==='yes'?'selected':''}>✅ Var</option>
+            <option value="no" ${p.visa==='no'?'selected':''}>❌ Yok</option>
+            <option value="pending" ${p.visa==='pending'?'selected':''}>⏳ Başvurulacak</option>
+          </select>
+        </div>
+        <div>
+          <label class="label">Uçak</label>
+          <select class="input p-flight">
+            <option value="" ${!p.flight?'selected':''}>-- Seçin --</option>
+            <option value="yes" ${p.flight==='yes'?'selected':''}>✅ İsteniyor</option>
+            <option value="no" ${p.flight==='no'?'selected':''}>❌ İstenmiyor</option>
+          </select>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+window.addParticipantRow = function(tourId, tourType) {
+  const list = document.getElementById('participantList');
+  const idx = list.querySelectorAll('.participant-card').length;
+  // Remove empty state message if present
+  const emptyMsg = list.querySelector('p');
+  if (emptyMsg) emptyMsg.remove();
+  const div = document.createElement('div');
+  div.innerHTML = participantCardHtml({}, idx, tourType);
+  list.appendChild(div.firstElementChild);
+};
+
+window.removeParticipantCard = function(btn) {
+  const card = btn.closest('.participant-card');
+  card.remove();
+  // Re-number
+  document.querySelectorAll('.participant-card').forEach((c, i) => {
+    c.querySelector('.font-semibold').textContent = 'Katılımcı ' + (i+1);
+    c.dataset.idx = i;
+  });
+};
+
+window.saveParticipants = function(tourId) {
+  const cards = document.querySelectorAll('.participant-card');
+  const participants = [];
+  cards.forEach(card => {
+    const name = card.querySelector('.p-name').value.trim();
+    if (!name) return;
+    participants.push({
+      name,
+      tc: card.querySelector('.p-tc').value.trim(),
+      birthDate: card.querySelector('.p-birth').value,
+      phone: card.querySelector('.p-phone').value.trim(),
+      passportNo: card.querySelector('.p-passport').value.trim(),
+      passportExpiry: card.querySelector('.p-passexp').value,
+      visa: card.querySelector('.p-visa').value,
+      flight: card.querySelector('.p-flight').value,
+    });
+  });
+  const tours = DB.tours();
+  const idx = tours.findIndex(t => t.id === tourId);
+  if (idx >= 0) {
+    tours[idx].participants = participants;
+    DB.saveTours(tours);
+    toast(participants.length + ' katılımcı kaydedildi');
+    closeModal(); render();
+  }
+};
+
+window.exportParticipantsExcel = function(tourId) {
+  const tours = DB.tours();
+  const t = tours.find(x => x.id === tourId);
+  if (!t) return;
+  const participants = t.participants || [];
+
+  const visaLabel = { 'yes': 'Var', 'no': 'Yok', 'pending': 'Başvurulacak', '': '-' };
+  const flightLabel = { 'yes': 'İsteniyor', 'no': 'İstenmiyor', '': '-' };
+
+  const headers = ['#', 'Ad Soyad', 'TC Kimlik No', 'Doğum Tarihi', 'Telefon', 'Pasaport No', 'Pasaport Geçerlilik', 'Vize', 'Uçak'];
+  const rows = participants.map((p, i) => [
+    i + 1,
+    p.name || '',
+    p.tc || '',
+    p.birthDate ? new Date(p.birthDate).toLocaleDateString('tr-TR') : '',
+    p.phone || '',
+    p.passportNo || '',
+    p.passportExpiry ? new Date(p.passportExpiry).toLocaleDateString('tr-TR') : '',
+    visaLabel[p.visa] || '-',
+    flightLabel[p.flight] || '-',
+  ]);
+
+  // Current state from modal if open
+  const modalCards = document.querySelectorAll('.participant-card');
+  const currentParticipants = [];
+  if (modalCards.length > 0) {
+    modalCards.forEach((card, i) => {
+      const name = card.querySelector('.p-name').value.trim();
+      if (!name) return;
+      currentParticipants.push([
+        i + 1,
+        name,
+        card.querySelector('.p-tc').value.trim(),
+        card.querySelector('.p-birth').value ? new Date(card.querySelector('.p-birth').value).toLocaleDateString('tr-TR') : '',
+        card.querySelector('.p-phone').value.trim(),
+        card.querySelector('.p-passport').value.trim(),
+        card.querySelector('.p-passexp').value ? new Date(card.querySelector('.p-passexp').value).toLocaleDateString('tr-TR') : '',
+        visaLabel[card.querySelector('.p-visa').value] || '-',
+        flightLabel[card.querySelector('.p-flight').value] || '-',
+      ]);
+    });
+  }
+
+  const finalRows = currentParticipants.length > 0 ? currentParticipants : rows;
+
+  const wb = XLSX.utils.book_new();
+  const wsData = [headers, ...finalRows];
+  const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+  // Column widths
+  ws['!cols'] = [
+    { wch: 4 }, { wch: 25 }, { wch: 15 }, { wch: 14 }, { wch: 16 },
+    { wch: 15 }, { wch: 18 }, { wch: 12 }, { wch: 14 }
+  ];
+
+  // Style header row
+  headers.forEach((h, i) => {
+    const cellRef = XLSX.utils.encode_cell({ r: 0, c: i });
+    if (!ws[cellRef]) return;
+    ws[cellRef].s = {
+      font: { bold: true, color: { rgb: 'FFFFFF' } },
+      fill: { fgColor: { rgb: '2563EB' } },
+      alignment: { horizontal: 'center' }
+    };
+  });
+
+  XLSX.utils.book_append_sheet(wb, ws, 'Katılımcı Listesi');
+
+  // Tour info sheet
+  const infoData = [
+    ['Tur Adı', t.tourName],
+    ['Tur Türü', t.tourType === 'domestic' ? 'Yurt İçi' : 'Yurt Dışı'],
+    ['Başlangıç', t.startDate ? new Date(t.startDate).toLocaleDateString('tr-TR') : '-'],
+    ['Bitiş', t.endDate ? new Date(t.endDate).toLocaleDateString('tr-TR') : '-'],
+    ['Durum', t.status === 'confirmed' ? 'Konfirme' : t.status === 'cancelled' ? 'İptal' : 'Beklemede'],
+    ['Toplam Katılımcı', finalRows.length],
+    ['Oluşturulma', new Date().toLocaleDateString('tr-TR')],
+  ];
+  const wsInfo = XLSX.utils.aoa_to_sheet(infoData);
+  wsInfo['!cols'] = [{ wch: 20 }, { wch: 30 }];
+  XLSX.utils.book_append_sheet(wb, wsInfo, 'Tur Bilgileri');
+
+  const fileName = 'KatilimciListesi_' + (t.tourName || 'Tur').replace(/\s+/g, '_') + '_' + new Date().toISOString().split('T')[0] + '.xlsx';
+  XLSX.writeFile(wb, fileName);
+  toast('Excel dosyası indirildi: ' + fileName);
+};
+
+// ============ EXPENSES (Genel Giderler) ============
+function renderExpenses() {
+  const expenses = DB.expenses();
+  const s = DB.settings();
+  const usdRate = parseFloat(s.usdRate)||32, eurRate = parseFloat(s.eurRate)||35;
+  const toTLExp = (a,cur) => cur==='USD'?a*usdRate:cur==='EUR'?a*eurRate:a;
+  const totalTL = expenses.reduce((s,e)=>s+toTLExp(parseFloat(e.amount)||0,e.currency||'TRY'),0);
+  const months = ['Ocak','Şubat','Mart','Nisan','Mayıs','Haziran','Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık'];
+  const thisMonth = new Date().getMonth(), thisYear = new Date().getFullYear();
+  const monthlyExp = expenses.filter(e=>e.date&&new Date(e.date).getMonth()===thisMonth&&new Date(e.date).getFullYear()===thisYear);
+  const monthlyTotal = monthlyExp.reduce((s,e)=>s+toTLExp(parseFloat(e.amount)||0,e.currency||'TRY'),0);
+
+  return `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:8px;">
+      <h1 class="text-2xl font-bold text-slate-800">💸 Genel Giderler</h1>
+      <div style="display:flex;gap:8px;">
+        <button id="addExpenseBtn" class="btn-primary">+ Gider Ekle</button>
+        <button onclick="exportExpensesExcel()" class="btn-success">📊 Excel</button>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:20px;">
+      <div class="stat-card"><p style="font-size:12px;color:#64748b;">Toplam Gider (TL)</p><p style="font-size:24px;font-weight:700;color:#dc2626;">${fmt(totalTL)}</p></div>
+      <div class="stat-card"><p style="font-size:12px;color:#64748b;">${months[thisMonth]} Gideri</p><p style="font-size:22px;font-weight:700;color:#f59e0b;">${fmt(monthlyTotal)}</p></div>
+      <div class="stat-card"><p style="font-size:12px;color:#64748b;">Toplam Kalem</p><p style="font-size:24px;font-weight:700;">${expenses.length}</p></div>
+    </div>
+    <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-x-auto">
+      <table class="data-table">
+        <thead><tr><th>Tarih</th><th>Açıklama</th><th>Kategori</th><th>Tutar</th><th>Döviz</th><th>TL Karşılığı</th><th>İşlem</th></tr></thead>
+        <tbody>
+          ${expenses.length ? [...expenses].sort((a,b)=>new Date(b.date)-new Date(a.date)).map(e => `<tr>
+            <td>${fmtDate(e.date)}</td>
+            <td style="font-weight:500;">${e.description||'-'}</td>
+            <td><span class="badge badge-yellow">${e.category||'Diğer'}</span></td>
+            <td style="font-weight:600;color:#dc2626;">${new Intl.NumberFormat('tr-TR',{minimumFractionDigits:2}).format(parseFloat(e.amount)||0)}</td>
+            <td>${e.currency||'TRY'}</td>
+            <td style="color:#64748b;font-size:12px;">${e.currency!=='TRY'?fmt(toTLExp(parseFloat(e.amount)||0,e.currency||'TRY')):'-'}</td>
+            <td><button onclick="editExpense('${e.id}')" class="text-blue-600 hover:underline text-sm mr-2">Düzenle</button><button onclick="deleteExpense('${e.id}')" class="text-red-600 hover:underline text-sm">Sil</button></td>
+          </tr>`).join('') : '<tr><td colspan="7" style="text-align:center;color:#94a3b8;padding:28px;">Henüz gider eklenmemiş</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function attachExpensesHandlers() {
+  document.getElementById('addExpenseBtn').addEventListener('click', ()=>openExpenseForm());
+}
+
+const EXPENSE_CATS = ['Ofis Kirası','Personel Maaşı','Elektrik/Su/İnternet','Reklam/Pazarlama','Ulaşım','Yazılım/Abonelik','Vergi/SGK','Diğer'];
+
+function openExpenseForm(e={}) {
+  openModal(`<div class="p-6">
+    <h2 style="font-size:18px;font-weight:700;margin-bottom:16px;">${e.id?'Gider Düzenle':'Yeni Gider'}</h2>
+    <form id="expenseForm" style="display:flex;flex-direction:column;gap:12px;">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div><label class="label">Tarih *</label><input name="date" type="date" class="input" value="${e.date||new Date().toISOString().split('T')[0]}" required></div>
+        <div><label class="label">Kategori</label>
+          <select name="category" class="input">
+            ${EXPENSE_CATS.map(cat=>`<option ${e.category===cat?'selected':''}>${cat}</option>`).join('')}
+          </select>
+        </div>
+        <div style="grid-column:1/-1;"><label class="label">Açıklama *</label><input name="description" class="input" value="${e.description||''}" required placeholder="Gider açıklaması"></div>
+        <div><label class="label">Tutar *</label><input name="amount" type="number" step="0.01" class="input" value="${e.amount||0}" required></div>
+        <div><label class="label">Döviz</label>
+          <select name="currency" class="input">
+            <option value="TRY" ${(e.currency||'TRY')==='TRY'?'selected':''}>₺ TL</option>
+            <option value="USD" ${e.currency==='USD'?'selected':''}>$ USD</option>
+            <option value="EUR" ${e.currency==='EUR'?'selected':''}>€ EUR</option>
+          </select>
+        </div>
+        <div style="grid-column:1/-1;"><label class="label">Not</label><input name="notes" class="input" value="${e.notes||''}" placeholder="Opsiyonel not"></div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;padding-top:10px;border-top:1px solid #e2e8f0;">
+        <button type="button" class="btn-secondary" onclick="closeModal()">İptal</button>
+        <button type="submit" class="btn-primary">Kaydet</button>
+      </div>
+    </form>
+  </div>`);
+  document.getElementById('expenseForm').addEventListener('submit', ev => {
+    ev.preventDefault();
+    const data = Object.fromEntries(new FormData(ev.target));
+    data.amount = parseFloat(data.amount)||0;
+    const expenses = DB.expenses();
+    if (e.id) { const idx=expenses.findIndex(x=>x.id===e.id); expenses[idx]={...e,...data}; }
+    else expenses.push({id:uid(),...data,createdAt:new Date().toISOString()});
+    DB.saveExpenses(expenses); closeModal(); toast('Gider kaydedildi'); render();
+  });
+}
+
+window.editExpense = id => { const e=DB.expenses().find(x=>x.id===id); if(e) openExpenseForm(e); };
+window.deleteExpense = id => {
+  const e = DB.expenses().find(x=>x.id===id);
+  if (!confirm('⚠️ "' + (e?.description||'bu gider') + '" silinecek. Emin misiniz?')) return;
+  if (!confirm('🔴 Geri alınamaz! Silmek istiyor musunuz?')) return;
+  DB.saveExpenses(DB.expenses().filter(x=>x.id!==id)); toast('Gider silindi'); render();
+};
+
+window.exportExpensesExcel = function() {
+  const expenses = DB.expenses();
+  const s = DB.settings();
+  const usdRate=parseFloat(s.usdRate)||32, eurRate=parseFloat(s.eurRate)||35;
+  const toTLExp=(a,cur)=>cur==='USD'?a*usdRate:cur==='EUR'?a*eurRate:a;
+  const wb = XLSX.utils.book_new();
+  const headers = ['Tarih','Aciklama','Kategori','Tutar','Doviz','TL Karsiligi'];
+  const rows = [...expenses].sort((a,b)=>new Date(b.date)-new Date(a.date)).map(e=>[
+    fmtDate(e.date), e.description||'-', e.category||'Diger',
+    parseFloat(e.amount)||0, e.currency||'TRY',
+    parseFloat(toTLExp(parseFloat(e.amount)||0,e.currency||'TRY').toFixed(2))
+  ]);
+  const total = expenses.reduce((s,e)=>s+toTLExp(parseFloat(e.amount)||0,e.currency||'TRY'),0);
+  rows.push(['','','','TOPLAM (TL)','',parseFloat(total.toFixed(2))]);
+  const ws = XLSX.utils.aoa_to_sheet([headers,...rows]);
+  ws['!cols']=[{wch:12},{wch:28},{wch:18},{wch:12},{wch:8},{wch:16}];
+  XLSX.utils.book_append_sheet(wb,ws,'Genel Giderler');
+  XLSX.writeFile(wb,'GenelGiderler_'+new Date().toISOString().split('T')[0]+'.xlsx');
+  toast('Giderler Excel indirildi');
+};
+
+// ============ TOUR PROGRAMS (Tur Programları) ============
+function renderTourPrograms() {
+  const programs = DB.tourPrograms();
+  return `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:8px;">
+      <h1 class="text-2xl font-bold text-slate-800">🗺️ Tur Programları</h1>
+      <button id="addTourProgramBtn" class="btn-primary">+ Yeni Program</button>
+    </div>
+    ${programs.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px;">
+      ${programs.map(p => `
+        <div style="background:#fff;border-radius:12px;border:1px solid #e2e8f0;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.06);">
+          ${p.coverImage ? `<img src="${p.coverImage}" style="width:100%;height:140px;object-fit:cover;">` : `<div style="width:100%;height:140px;background:linear-gradient(135deg,#2563eb,#4f46e5);display:flex;align-items:center;justify-content:center;font-size:40px;">🗺️</div>`}
+          <div style="padding:14px;">
+            <h3 style="font-weight:700;font-size:15px;margin-bottom:4px;">${p.title}</h3>
+            <p style="font-size:12px;color:#64748b;margin-bottom:8px;">${p.days&&p.days.length?p.days.length+' gün':''}${p.price?' • '+p.price:''}</p>
+            <p style="font-size:12px;color:#94a3b8;margin-bottom:10px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;">${p.summary||''}</p>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+              <button onclick="editTourProgram('${p.id}')" class="btn-sm btn-secondary">Düzenle</button>
+              <button onclick="previewTourProgram('${p.id}')" class="btn-sm" style="background:#eff6ff;color:#2563eb;border:none;border-radius:6px;cursor:pointer;padding:4px 10px;font-size:12px;font-weight:500;">Önizle</button>
+              <button onclick="downloadTourProgramPDF('${p.id}','tr')" class="btn-sm btn-success">PDF TR</button>
+              <button onclick="downloadTourProgramPDF('${p.id}','en')" class="btn-sm" style="background:#4f46e5;color:#fff;border:none;border-radius:6px;cursor:pointer;padding:4px 10px;font-size:12px;font-weight:500;">PDF EN</button>
+              <button onclick="deleteTourProgram('${p.id}')" class="btn-sm btn-danger">Sil</button>
+            </div>
+          </div>
+        </div>
+      `).join('')}
+    </div>` : `<div style="background:#fff;border-radius:12px;border:1px solid #e2e8f0;padding:60px;text-align:center;">
+      <div style="font-size:48px;margin-bottom:12px;">🗺️</div>
+      <p style="color:#64748b;font-size:15px;margin-bottom:4px;">Henüz tur programı oluşturulmamış</p>
+      <p style="color:#94a3b8;font-size:13px;">Gün gün program, resimler, fiyat ve dahil/hariç servislerle profesyonel PDF hazırlayın.</p>
+    </div>`}
+  `;
+}
+
+function attachTourProgramHandlers() {
+  const btn = document.getElementById('addTourProgramBtn');
+  if (btn) btn.addEventListener('click', ()=>openTourProgramForm());
+}
+
+window.editTourProgram = id => { const p=DB.tourPrograms().find(x=>x.id===id); if(p) openTourProgramForm(p); };
+window.deleteTourProgram = id => {
+  const p=DB.tourPrograms().find(x=>x.id===id);
+  if(!confirm('⚠️ "' + (p?.title||'bu program') + '" silinecek. Emin misiniz?')) return;
+  if(!confirm('🔴 Geri alınamaz! Silmek istiyor musunuz?')) return;
+  DB.saveTourPrograms(DB.tourPrograms().filter(x=>x.id!==id)); toast('Program silindi'); render();
+};
+
+function openTourProgramForm(p={}) {
+  const days = p.days || [{ day: 1, title: '', description: '' }];
+  openModal(`<div style="padding:22px;max-height:85vh;overflow-y:auto;">
+    <h2 style="font-size:18px;font-weight:700;margin-bottom:16px;">${p.id?'Program Düzenle':'Yeni Tur Programı'}</h2>
+    <form id="tourProgramForm" style="display:flex;flex-direction:column;gap:14px;">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div style="grid-column:1/-1;"><label class="label">Program Başlığı *</label><input name="title" class="input" value="${p.title||''}" required placeholder="Örn: Kapadokya 3 Gün Turu"></div>
+        <div style="grid-column:1/-1;"><label class="label">Kısa Açıklama</label><textarea name="summary" class="input" rows="2" placeholder="Programın kısa tanıtımı">${p.summary||''}</textarea></div>
+        <div><label class="label">Fiyat / Kişi</label><input name="price" class="input" value="${p.price||''}" placeholder="Örn: 250 USD / kişi"></div>
+        <div><label class="label">Süre</label><input name="duration" class="input" value="${p.duration||''}" placeholder="Örn: 3 Gün 2 Gece"></div>
+        <div style="grid-column:1/-1;">
+          <label class="label">Kapak Fotoğrafı</label>
+          <div style="display:flex;flex-direction:column;gap:8px;">
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+              <label style="background:#e2e8f0;color:#374151;padding:6px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:500;white-space:nowrap;border:none;">
+                📁 Dosyadan Seç
+                <input type="file" id="coverImgFile" accept="image/*" style="display:none;">
+              </label>
+              <span style="font-size:12px;color:#94a3b8;">veya URL:</span>
+              <input name="coverImage" id="coverImgInp" class="input" value="${p.coverImage||''}" placeholder="https://..." style="flex:1;min-width:200px;">
+            </div>
+            <div id="coverPreviewBox" style="display:${p.coverImage?'block':'none'};">
+              <img id="coverPreviewImg" src="${p.coverImage||''}" style="max-height:120px;border-radius:8px;border:1px solid #e2e8f0;object-fit:cover;${p.coverImage?'':' display:none;'}">
+            </div>
+          </div>
+        </div>
+        <div><label class="label">Dahil Servisler</label><textarea name="included" class="input" rows="4" placeholder="Her satıra bir madde yazın:&#10;- Konaklama&#10;- Kahvaltı&#10;- Rehber">${p.included||''}</textarea></div>
+        <div><label class="label">Hariç Servisler</label><textarea name="excluded" class="input" rows="4" placeholder="Her satıra bir madde yazın:&#10;- Uçak bileti&#10;- Vize&#10;- Kişisel harcamalar">${p.excluded||''}</textarea></div>
+        <div style="grid-column:1/-1;"><label class="label">Notlar / Özel Koşullar</label><textarea name="notes" class="input" rows="2" placeholder="Opsiyonel notlar, iptal koşulları vb.">${p.notes||''}</textarea></div>
+      </div>
+      <!-- Daily program -->
+      <div style="border-top:1px solid #e2e8f0;padding-top:14px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+          <label class="label" style="margin:0;">📅 Günlük Program</label>
+          <button type="button" onclick="addDayRow()" style="font-size:12px;color:#2563eb;background:none;border:none;cursor:pointer;font-weight:500;">+ Gün Ekle</button>
+        </div>
+        <div id="dayRows" style="display:flex;flex-direction:column;gap:10px;">
+          ${days.map((d,i)=>dayRowHtml(d,i)).join('')}
+        </div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;padding-top:12px;border-top:1px solid #e2e8f0;">
+        <button type="button" class="btn-secondary" onclick="closeModal()">İptal</button>
+        <button type="submit" class="btn-primary">Kaydet</button>
+      </div>
+    </form>
+  </div>`);
+
+  // Image file upload
+  document.getElementById('coverImgFile').addEventListener('change', ev => {
+    const file = ev.target.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = e => {
+      const data = e.target.result;
+      document.getElementById('coverImgInp').value = data;
+      const box = document.getElementById('coverPreviewBox');
+      const img = document.getElementById('coverPreviewImg');
+      if (box) box.style.display='block';
+      if (img) { img.src=data; img.style.display='block'; }
+    };
+    reader.readAsDataURL(file);
+  });
+  // Preview on URL input
+  const coverInp = document.getElementById('coverImgInp');
+  if (coverInp) {
+    coverInp.addEventListener('input', ev => {
+      const url = ev.target.value;
+      const box = document.getElementById('coverPreviewBox');
+      const img = document.getElementById('coverPreviewImg');
+      if (url && box && img) { box.style.display='block'; img.src=url; img.style.display='block'; }
+      else if (box) box.style.display='none';
+    });
+  }
+
+  window.addDayRow = function() {
+    const container = document.getElementById('dayRows');
+    const idx = container.children.length;
+    const div = document.createElement('div');
+    div.innerHTML = dayRowHtml({ day: idx+1, title:'', description:'' }, idx);
+    container.appendChild(div.firstElementChild);
+  };
+  window.removeDayRow = function(btn) { btn.closest('.day-row').remove(); renumberDays(); };
+  function renumberDays() {
+    document.querySelectorAll('.day-row').forEach((r,i) => {
+      r.querySelector('.day-num-label').textContent = 'Gün ' + (i+1);
+    });
+  }
+
+  document.getElementById('tourProgramForm').addEventListener('submit', ev => {
+    ev.preventDefault();
+    const data = Object.fromEntries(new FormData(ev.target));
+    const dayRowEls = document.querySelectorAll('.day-row');
+    const days = [];
+    dayRowEls.forEach((r,i) => {
+      days.push({
+        day: i+1,
+        title: r.querySelector('.day-title').value.trim(),
+        description: r.querySelector('.day-desc').value.trim(),
+        image: r.querySelector('.day-img').value.trim(),
+      });
+    });
+    data.days = days;
+    const programs = DB.tourPrograms();
+    if (p.id) { const idx=programs.findIndex(x=>x.id===p.id); programs[idx]={...p,...data}; }
+    else programs.push({id:uid(),...data,createdAt:new Date().toISOString()});
+    DB.saveTourPrograms(programs); closeModal(); toast('Program kaydedildi'); render();
+  });
+}
+
+function dayRowHtml(d, i) {
+  const imgPreview = d.image ? `<img src="${d.image}" style="max-height:80px;border-radius:6px;border:1px solid #e2e8f0;object-fit:cover;margin-top:4px;">` : '';
+  return `<div class="day-row" style="background:#f8fafc;border-radius:8px;padding:12px;border:1px solid #e2e8f0;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+      <span class="day-num-label" style="font-weight:600;font-size:13px;color:#2563eb;">Gün ${d.day||i+1}</span>
+      <button type="button" onclick="removeDayRow(this)" style="color:#dc2626;background:none;border:none;cursor:pointer;font-size:16px;">✕</button>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:6px;">
+      <input class="input day-title" placeholder="Gün başlığı (Örn: Istanbul Variş)" value="${d.title||''}">
+      <textarea class="input day-desc" rows="3" placeholder="Bu gunun detayli aciklamasi...">${d.description||''}</textarea>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <label style="background:#e2e8f0;color:#374151;padding:5px 10px;border-radius:6px;cursor:pointer;font-size:12px;white-space:nowrap;font-weight:500;">
+          📷 Resim Seç
+          <input type="file" accept="image/*" class="day-img-file" style="display:none;">
+        </label>
+        <input class="input day-img" placeholder="veya gorsel URL" value="${d.image||''}" style="flex:1;min-width:120px;">
+      </div>
+      <div class="day-img-preview">${imgPreview}</div>
+    </div>
+  </div>`;
+}
+
+window.previewTourProgram = function(id) {
+  const p = DB.tourPrograms().find(x=>x.id===id);
+  const s = DB.settings();
+  if (!p) return;
+  const includedList = (p.included||'').split('\n').filter(Boolean).map(l=>`<li style="margin-bottom:3px;">✅ ${l.replace(/^[-•]/,'').trim()}</li>`).join('');
+  const excludedList = (p.excluded||'').split('\n').filter(Boolean).map(l=>`<li style="margin-bottom:3px;">❌ ${l.replace(/^[-•]/,'').trim()}</li>`).join('');
+  const daysHtml = (p.days||[]).map(d=>`
+    <div style="margin-bottom:16px;border-left:3px solid #2563eb;padding-left:12px;">
+      <h4 style="font-weight:700;color:#1e293b;margin-bottom:4px;">Gün ${d.day}: ${d.title}</h4>
+      <p style="font-size:13px;color:#475569;line-height:1.6;">${d.description}</p>
+      ${d.image?`<img src="${d.image}" style="width:100%;max-height:160px;object-fit:cover;border-radius:6px;margin-top:8px;">`:''}
+    </div>`).join('');
+
+  openModal(`<div style="padding:22px;">
+    <div style="display:flex;justify-content:space-between;margin-bottom:14px;align-items:center;">
+      <h2 style="font-size:17px;font-weight:700;">Tur Programı Önizleme</h2>
+      <div style="display:flex;gap:6px;">
+        <button onclick="downloadTourProgramPDF('${p.id}','tr')" class="btn-success" style="font-size:12px;padding:5px 12px;">📄 PDF TR</button>
+        <button onclick="downloadTourProgramPDF('${p.id}','en')" style="background:#4f46e5;color:#fff;padding:5px 12px;border-radius:6px;border:none;cursor:pointer;font-size:12px;">📄 PDF EN</button>
+        <button onclick="closeModal()" class="btn-secondary" style="font-size:12px;padding:5px 12px;">Kapat</button>
+      </div>
+    </div>
+    <div style="border:2px solid #e2e8f0;padding:24px;background:#fff;max-height:65vh;overflow-y:auto;">
+      ${p.coverImage?`<img src="${p.coverImage}" style="width:100%;height:200px;object-fit:cover;border-radius:8px;margin-bottom:16px;">`:``}
+      <div style="display:flex;justify-content:space-between;border-bottom:2px solid #2563eb;padding-bottom:12px;margin-bottom:16px;">
+        <div>
+          <h2 style="font-size:20px;font-weight:700;color:#2563eb;">${s.agencyName}</h2>
+          <p style="font-size:11px;color:#64748b;">${s.agencyPhone} • ${s.agencyEmail}</p>
+        </div>
+        <div style="text-align:right;">
+          <h1 style="font-size:18px;font-weight:700;">${p.title}</h1>
+          ${p.duration?`<p style="font-size:12px;color:#64748b;">${p.duration}</p>`:''}
+          ${p.price?`<p style="font-size:13px;font-weight:600;color:#16a34a;">${p.price}</p>`:''}
+        </div>
+      </div>
+      ${p.summary?`<p style="font-size:13px;color:#475569;margin-bottom:16px;line-height:1.6;">${p.summary}</p>`:''}
+      <h3 style="font-weight:700;margin-bottom:10px;color:#1e293b;">📅 Günlük Program</h3>
+      ${daysHtml}
+      ${(includedList||excludedList)?`<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px;">
+        ${includedList?`<div><h4 style="font-weight:700;color:#16a34a;margin-bottom:6px;">✅ Dahil Servisler</h4><ul style="list-style:none;padding:0;font-size:12px;color:#374151;">${includedList}</ul></div>`:''}
+        ${excludedList?`<div><h4 style="font-weight:700;color:#dc2626;margin-bottom:6px;">❌ Hariç Servisler</h4><ul style="list-style:none;padding:0;font-size:12px;color:#374151;">${excludedList}</ul></div>`:''}
+      </div>`:''}
+      ${p.notes?`<div style="margin-top:14px;padding:10px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;font-size:12px;color:#78350f;"><strong>Not:</strong> ${p.notes}</div>`:''}
+    </div>
+  </div>`);
+};
+
+window.downloadTourProgramPDF = function(id, lang) {
+  lang = lang || 'tr';
+  const p = DB.tourPrograms().find(x=>x.id===id);
+  const s = DB.settings();
+  if (!p) return;
+  const L = {
+    tr:{ daily:'GUNLUK PROGRAM', inc:'DAHIL SERVISLER', exc:'HARIC SERVISLER',
+         notes:'NOTLAR', price:'Fiyat', dur:'Sure', day:'Gun', footer:'Iyi tatiller dileriz!' },
+    en:{ daily:'DAILY ITINERARY', inc:'INCLUDED SERVICES', exc:'EXCLUDED SERVICES',
+         notes:'NOTES', price:'Price', dur:'Duration', day:'Day', footer:'Have a great holiday!' }
+  };
+  const t = L[lang]||L.tr;
+  const {jsPDF} = window.jspdf;
+  const doc = new jsPDF();
+  const meta = [p.duration?t.dur+': '+pdfSafe(p.duration):'', p.price?t.price+': '+pdfSafe(p.price):''].filter(Boolean).join('  |  ');
+  pdfHeader(doc, s, pdfSafe(p.title||''), meta||null);
+  let y = 44;
+
+  // Summary
+  if (p.summary) {
+    const lines = pdfWrap(doc, p.summary, 176);
+    doc.setFont('helvetica','italic'); doc.setFontSize(9); doc.setTextColor(80,80,80);
+    lines.forEach(l=>{ if(y>268){doc.addPage();y=20;} doc.text(l,14,y); y+=4.5; });
+    y += 4;
+  }
+
+  // Daily program
+  if ((p.days||[]).length) {
+    if(y>260){doc.addPage();y=20;}
+    doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(37,99,235);
+    doc.text(t.daily, 14, y); y += 6;
+
+    (p.days||[]).forEach(d => {
+      if(y>260){doc.addPage();y=20;}
+      // Day title with background bar
+      doc.setFillColor(239,246,255);
+      doc.rect(14, y-3.5, 182, 7.5, 'F');
+      doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(37,99,235);
+      doc.text(t.day+' '+d.day+(d.title?': '+pdfSafe(d.title):''), 17, y+0.5);
+      y += 9;
+
+      // Description with word wrap
+      if (d.description) {
+        const clean = pdfSafe(d.description.replace(/<[^>]+>/g,''));
+        const lines = doc.splitTextToSize(clean, 170);
+        doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.setTextColor(55,55,55);
+        lines.forEach(l=>{ if(y>268){doc.addPage();y=20;} doc.text(l,18,y); y+=4.5; });
+      }
+
+      // Day image (data URL only — base64 from file picker)
+      if (d.image && d.image.startsWith('data:image')) {
+        try {
+          const isFmt = d.image.indexOf('data:image/png')>=0?'PNG':'JPEG';
+          const imgH = 38;
+          if(y+imgH>272){doc.addPage();y=20;}
+          doc.addImage(d.image, isFmt, 18, y, 80, imgH);
+          y += imgH + 4;
+        } catch(e){ /* skip */ }
+      }
+      y += 4;
+    });
+  }
+
+  // Included / Excluded two-column table
+  const incLines = (p.included||'').split('\n').filter(Boolean).map(l=>pdfSafe(l.replace(/^[-•+]/,'').trim()));
+  const excLines = (p.excluded||'').split('\n').filter(Boolean).map(l=>pdfSafe(l.replace(/^[-•]/,'').trim()));
+  if (incLines.length||excLines.length) {
+    if(y>240){doc.addPage();y=20;}
+    const maxL = Math.max(incLines.length,excLines.length);
+    const body = [];
+    for(let i=0;i<maxL;i++) body.push([(incLines[i]?'+ '+incLines[i]:''),(excLines[i]?'- '+excLines[i]:'')]);
+    doc.autoTable({ startY:y, head:[[t.inc,t.exc]], body,
+      theme:'grid',
+      headStyles:{fillColor:[37,99,235],textColor:255,fontSize:8.5,font:'helvetica',fontStyle:'bold'},
+      bodyStyles:{fontSize:8,font:'helvetica'},
+      columnStyles:{0:{cellWidth:88},1:{cellWidth:88}} });
+    y = doc.lastAutoTable.finalY+6;
+  }
+
+  // Notes
+  if (p.notes) {
+    if(y>265){doc.addPage();y=20;}
+    doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(120,53,14);
+    doc.text(t.notes+':', 14, y); y+=4;
+    doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(80,80,80);
+    pdfWrap(doc,p.notes,176).forEach(l=>{ if(y>268){doc.addPage();y=20;} doc.text(l,14,y); y+=4.5; });
+  }
+
+  pdfFooter(doc, s);
+  doc.save('TurProgrami_'+pdfSafe(p.title||'Program').replace(/\s+/g,'_')+'_'+lang.toUpperCase()+'.pdf');
+  toast('Tur Programi PDF indirildi ('+lang.toUpperCase()+')');
+};
+
+// ============ GIST CLOUD STATUS & AUTO SYNC ============
+// Her kayıt/değişiklik otomatik olarak GitHub Gist'e yedeklenir
+// diğer cihazlara yansır.
+
+// cleanupRealtimeSync — Firebase kaldırıldı, boş fonksiyon
+function cleanupRealtimeSync() {}
+
+window.saveGistToken = function() {
+  const input = document.getElementById('gistTokenInput');
+  const token = input ? input.value.trim() : '';
+  if (!token) { 
+    document.getElementById('gistTokenStatus').textContent = '⚠️ Token boş olamaz';
+    return; 
+  }
+  localStorage.setItem('ap_gist_token', token);
+  // Gist ID'yi de sıfırla ki yeni token ile yeniden oluşturulsun
+  localStorage.removeItem('ap_gist_id');
+  // GistCloud'u yeniden başlat
+  window._gistIdRuntime = null;
+  document.getElementById('gistTokenStatus').textContent = '✅ Token kaydedildi! Sayfa yenilenecek...';
+  setTimeout(() => location.reload(), 1500);
+};
+
+window.manualSync = async function() {
+  if (!window.GistCloud || !window.GistCloud.isConfigured()) {
+    toast('Token girilmemi\u015f! Ayarlar sayfas\u0131na gidin.', 'error'); return;
+  }
+  toast('☁️ Gist\'ten senkronizasyon başladı...', 'info');
+  try {
+    await DB.syncFromCloud();
+    toast('✅ Gist\'ten senkronize edildi!');
+    render();
+  } catch(e) {
+    toast('Senkronizasyon hatası: ' + e.message, 'error');
+  }
+};
+
+// Ayarlar sayfası açılınca token input'u doldur
+document.addEventListener('DOMContentLoaded', () => {
+  setTimeout(() => {
+    const inp = document.getElementById('gistTokenInput');
+    if (inp) {
+      const t = localStorage.getItem('ap_gist_token') || '';
+      if (t) {
+        inp.value = t;
+        document.getElementById('gistTokenStatus').textContent = '✅ Token kayıtlı';
+      }
+    }
+  }, 500);
+});
+
+window.pushToCloud = async function() {
+  if (!window.GistCloud || !window.GistCloud.isConfigured()) {
+    toast('Token girilmemiş!', 'error'); return;
+  }
+  const allData = {
+    customers: DB.customers(), bookings: DB.bookings(), tours: DB.tours(),
+    tourCategories: DB.tourCategories(), settings: DB.settings(),
+    expenses: DB.expenses(), tourPrograms: DB.tourPrograms(),
+    savedAt: new Date().toISOString()
+  };
+  const ok = await window.GistCloud.save(allData);
+  toast(ok ? '✅ Tüm veriler Gist\'e yüklendi!' : 'Yükleme hatası!', ok ? 'success' : 'error');
+};
+
+
+function renderSettings() {
+  const s = DB.settings();
+  const users = getUsers();
+  return `
+    <h1 class="text-2xl font-bold text-slate-800 mb-6">Ayarlar</h1>
+
+    <!-- Agency Info -->
+    <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-6 max-w-2xl mb-6">
+      <h3 class="font-semibold text-slate-800 mb-4">Acente Bilgileri (Voucher'da görünecek)</h3>
+      <form id="settingsForm" class="space-y-4">
+        <div><label class="label">Acente Adı</label><input name="agencyName" class="input" value="${s.agencyName}"></div>
+        <div><label class="label">Adres</label><input name="agencyAddress" class="input" value="${s.agencyAddress}"></div>
+        <div class="grid grid-cols-2 gap-4">
+          <div><label class="label">Telefon</label><input name="agencyPhone" class="input" value="${s.agencyPhone}"></div>
+          <div><label class="label">E-posta</label><input name="agencyEmail" class="input" value="${s.agencyEmail}"></div>
+        </div>
+        <div>
+          <label class="label">Logo (opsiyonel)</label>
+          <input type="file" id="logoUpload" accept="image/*" class="input">
+          ${s.agencyLogo ? `<img src="${s.agencyLogo}" class="h-16 mt-2 border rounded"><button type="button" onclick="clearLogo()" class="text-xs text-red-600 mt-1 block">Logoyu kaldır</button>` : ''}
+        </div>
+        <button type="submit" class="btn-primary">Kaydet</button>
+      </form>
+    </div>
+
+    <!-- Exchange Rates -->
+    <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-6 max-w-2xl mb-6">
+      <h3 class="font-semibold text-slate-800 mb-4">💱 Döviz Kurları <span class="text-sm font-normal text-slate-500">(Satış Raporu'nda TL hesabı için)</span></h3>
+      <form id="ratesForm" class="space-y-4">
+        <div class="grid grid-cols-2 gap-4">
+          <div><label class="label">1 USD = ? TL</label><input name="usdRate" type="number" step="0.01" class="input" value="${s.usdRate || 32}" placeholder="32.00"></div>
+          <div><label class="label">1 EUR = ? TL</label><input name="eurRate" type="number" step="0.01" class="input" value="${s.eurRate || 35}" placeholder="35.00"></div>
+        </div>
+        <button type="submit" class="btn-primary">Kurları Güncelle</button>
+      </form>
+    </div>
+
+    <!-- Password Change -->
+    <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-6 max-w-2xl mb-6">
+      <h3 class="font-semibold text-slate-800 mb-4">🔑 Şifre Değiştir</h3>
+      <form id="passwordForm" class="space-y-4">
+        <div>
+          <label class="label">Kullanıcı</label>
+          <select id="pwdUserSelect" class="input">
+            ${Object.keys(users).map(u => `<option value="${u}" ${u === currentUser.username ? 'selected' : ''}>${u} — ${users[u].name}</option>`).join('')}
+          </select>
+        </div>
+        <div><label class="label">Mevcut Şifre</label><input name="currentPass" type="password" class="input" placeholder="Mevcut şifrenizi girin" required></div>
+        <div><label class="label">Yeni Şifre</label><input name="newPass" type="password" class="input" placeholder="Yeni şifre (min. 6 karakter)" required minlength="6"></div>
+        <div><label class="label">Yeni Şifre (Tekrar)</label><input name="newPass2" type="password" class="input" placeholder="Tekrar girin" required></div>
+        <div id="pwdMsg" class="hidden text-sm p-2 rounded"></div>
+        <button type="submit" class="btn-primary">Şifreyi Değiştir</button>
+      </form>
+    </div>
+
+    <!-- Data Management -->
+    <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-6 max-w-2xl mb-6">
+      <h3 class="font-semibold text-slate-800 mb-4">Veri Yönetimi</h3>
+      <div class="flex gap-2 flex-wrap mb-4">
+        <button onclick="exportAllData()" class="btn-secondary">📥 JSON Yedekle</button>
+        <button onclick="importDataBtn()" class="btn-secondary">📤 Yedekten Yükle</button>
+        <input type="file" id="importFile" accept=".json" class="hidden">
+        <button onclick="clearAllData()" class="btn-danger">🗑️ Tüm Veriyi Sil</button>
+      </div>
+      <div class="flex gap-2 flex-wrap p-4 bg-green-50 rounded-lg border border-green-200">
+        <p class="w-full text-sm font-semibold text-green-800 mb-1">☁️ GitHub Gist Bulut Senkronizasyonu</p>
+        <p class="w-full text-xs text-green-700 mb-2">Her kayıtta otomatik yedeklenir. Token'ı aşağıya girin.</p>
+        <div class="w-full flex gap-2 items-center">
+          <input id="gistTokenInput" type="password" placeholder="GitHub Token (ghp_...)" 
+            class="flex-1 border border-green-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400"
+            value="" />
+          <button onclick="saveGistToken()" class="btn-primary text-sm px-4 py-2">Kaydet</button>
+        </div>
+        <p id="gistTokenStatus" class="w-full text-xs text-green-700"></p>
+        <div class="w-full flex gap-2 mt-1">
+          <button onclick="pushToCloud()" class="btn-primary text-sm">⬆️ Şimdi Gist'e Yükle</button>
+          <button onclick="manualSync()" class="btn-secondary text-sm">⬇️ Gist'ten Güncelle</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function attachSettingsHandlers() {
+  document.getElementById('settingsForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const data = Object.fromEntries(new FormData(e.target));
+    const current = DB.settings();
+    DB.saveSettings({ ...current, ...data });
+    toast('Ayarlar kaydedildi'); render();
+  });
+
+  // Exchange rates form
+  const ratesForm = document.getElementById('ratesForm');
+  if (ratesForm) {
+    ratesForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const data = Object.fromEntries(new FormData(e.target));
+      const current = DB.settings();
+      DB.saveSettings({ ...current, usdRate: parseFloat(data.usdRate) || 32, eurRate: parseFloat(data.eurRate) || 35 });
+      toast('Döviz kurları güncellendi');
+    });
+  }
+
+  // Password change form
+  const pwdForm = document.getElementById('passwordForm');
+  if (pwdForm) {
+    pwdForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const data = Object.fromEntries(fd);
+      const msgEl = document.getElementById('pwdMsg');
+      const selectedUser = document.getElementById('pwdUserSelect').value;
+      const users = getUsers();
+
+      const showMsg = (text, isError) => {
+        msgEl.textContent = text;
+        msgEl.className = isError
+          ? 'text-sm p-2 rounded bg-red-50 text-red-600'
+          : 'text-sm p-2 rounded bg-green-50 text-green-600';
+        msgEl.classList.remove('hidden');
+      };
+
+      if (!users[selectedUser]) { showMsg('Kullanıcı bulunamadı!', true); return; }
+      if (users[selectedUser].pass !== data.currentPass) { showMsg('Mevcut şifre yanlış!', true); return; }
+      if (data.newPass !== data.newPass2) { showMsg('Yeni şifreler eşleşmiyor!', true); return; }
+      if (data.newPass.length < 6) { showMsg('Şifre en az 6 karakter olmalıdır!', true); return; }
+
+      users[selectedUser].pass = data.newPass;
+      saveUsers(users);
+      showMsg('✅ Şifre başarıyla değiştirildi!', false);
+      e.target.reset();
+      toast('Şifre değiştirildi!');
+    });
+  }
+
+  document.getElementById('logoUpload').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const s = DB.settings();
+      DB.saveSettings({ ...s, agencyLogo: ev.target.result });
+      toast('Logo yüklendi'); render();
+    };
+    reader.readAsDataURL(file);
+  });
+
+  document.getElementById('importFile').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const data = JSON.parse(ev.target.result);
+        if (data.customers) DB.saveCustomers(data.customers);
+        if (data.bookings) DB.saveBookings(data.bookings);
+        if (data.tours) DB.saveTours(data.tours);
+        if (data.tourCategories) DB.saveTourCategories(data.tourCategories);
+        if (data.settings) DB.saveSettings(data.settings);
+        toast('Veri başarıyla yüklendi'); render();
+      } catch (err) { toast('Geçersiz dosya!', 'error'); }
+    };
+    reader.readAsText(file);
+  });
+}
+
+window.clearLogo = function() {
+  const s = DB.settings();
+  DB.saveSettings({ ...s, agencyLogo: '' });
+  render();
+};
+
+window.exportAllData = function() {
+  const data = {
+    customers: DB.customers(),
+    bookings: DB.bookings(),
+    tours: DB.tours(),
+    tourCategories: DB.tourCategories(),
+    settings: DB.settings(),
+    exportedAt: new Date().toISOString()
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'acente_yedek_' + new Date().toISOString().split('T')[0] + '.json';
+  a.click();
+  toast('Yedek dosyası indirildi');
+};
+
+window.importDataBtn = function() {
+  document.getElementById('importFile').click();
+};
+
+window.clearAllData = function() {
+  if (!confirm('🔴 TÜM verileri silmek istediğinize EMİN misiniz? Bu işlem GERİ ALINAMAZ!')) return;
+  if (!confirm('⛔ Son uyarı! Müşteriler, rezervasyonlar, turlar, HERŞEY silinecek. Devam?')) return;
+  const confirmText = prompt('Silme işlemini onaylamak için "SİL" yazın:');
+  if (confirmText !== 'SİL') { toast('Silme iptal edildi'); return; }
+  ['customers','bookings','tours','tourCategories','expenses','tourPrograms'].forEach(k => localStorage.removeItem('ap_'+k));
+  toast('Tüm veriler silindi'); render();
+};
+
+</script>
+</body>
+</html>
