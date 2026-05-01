@@ -198,6 +198,7 @@
       <div class="sidebar-link" data-view="reports">📈 Satış Raporu</div>
       <div class="sidebar-link" data-view="expenses">💸 Genel Giderler</div>
       <div class="sidebar-link" data-view="tourprograms">🗺️ Tur Programları</div>
+      <div class="sidebar-link" data-view="quotes">📋 Teklifler</div>
       <div class="sidebar-link" data-view="settings">⚙️ Ayarlar</div>
     </nav>
     <div class="p-3 border-t border-slate-700">
@@ -290,6 +291,8 @@ const DB = {
   }),
   saveSettings: (v) => DB.set('settings', v),
 
+  quotes: () => DB.get('quotes', []),
+  saveQuotes: (v) => DB.set('quotes', v),
   session: () => DB.get('session', null),
   saveSession: (v) => DB.set('session', v),
   expenses: () => DB.get('expenses', []),
@@ -390,6 +393,7 @@ function render() {
     case 'settings': c.innerHTML = renderSettings(); attachSettingsHandlers(); break;
     case 'expenses': c.innerHTML = renderExpenses(); attachExpensesHandlers(); break;
     case 'tourprograms': c.innerHTML = renderTourPrograms(); attachTourProgramHandlers(); break;
+    case 'quotes': c.innerHTML = renderQuotes(); attachQuoteHandlers(); break;
   }
 }
 
@@ -3200,6 +3204,789 @@ window.clearAllData = function() {
   ['customers','bookings','tours','tourCategories','expenses','tourPrograms'].forEach(k => localStorage.removeItem('ap_'+k));
   toast('Tüm veriler silindi'); render();
 };
+
+
+// ============ QUOTES (TEKLİFLER) ============
+
+function renderQuotes() {
+  const quotes = DB.quotes();
+  return `
+  <div class="p-6">
+    <div class="flex justify-between items-center mb-6">
+      <h2 class="text-2xl font-bold text-slate-800">📋 Teklifler</h2>
+      <button onclick="openQuoteModal()" class="btn-primary">+ Yeni Teklif</button>
+    </div>
+
+    ${quotes.length === 0 ? `
+      <div class="text-center py-20 text-slate-400">
+        <div class="text-5xl mb-4">📋</div>
+        <p class="text-lg">Henüz teklif oluşturulmamış</p>
+        <button onclick="openQuoteModal()" class="btn-primary mt-4">İlk Teklifi Oluştur</button>
+      </div>
+    ` : `
+      <div class="overflow-x-auto">
+        <table class="w-full bg-white rounded-xl shadow text-sm">
+          <thead>
+            <tr class="bg-slate-800 text-white">
+              <th class="px-4 py-3 text-left">Teklif No</th>
+              <th class="px-4 py-3 text-left">Müşteri</th>
+              <th class="px-4 py-3 text-left">Tarih</th>
+              <th class="px-4 py-3 text-left">Geçerlilik</th>
+              <th class="px-4 py-3 text-right">Toplam (TL)</th>
+              <th class="px-4 py-3 text-right">Toplam (USD)</th>
+              <th class="px-4 py-3 text-right">Toplam (EUR)</th>
+              <th class="px-4 py-3 text-center">İşlem</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${quotes.map((q, i) => `
+              <tr class="${i%2===0?'bg-white':'bg-slate-50'} hover:bg-blue-50 transition">
+                <td class="px-4 py-3 font-mono font-bold text-blue-700">${q.quoteNo || '-'}</td>
+                <td class="px-4 py-3 font-medium">${q.customerName || '-'}</td>
+                <td class="px-4 py-3">${q.date || '-'}</td>
+                <td class="px-4 py-3">${q.validUntil || '-'}</td>
+                <td class="px-4 py-3 text-right font-medium">₺${formatNum(calcTotal(q,'TRY'))}</td>
+                <td class="px-4 py-3 text-right font-medium">$${formatNum(calcTotal(q,'USD'))}</td>
+                <td class="px-4 py-3 text-right font-medium">€${formatNum(calcTotal(q,'EUR'))}</td>
+                <td class="px-4 py-3 text-center flex gap-1 justify-center">
+                  <button onclick="editQuote(${i})" class="px-2 py-1 bg-blue-600 text-white rounded text-xs hover:bg-blue-700">✏️</button>
+                  <button onclick="downloadQuotePDF(${i})" class="px-2 py-1 bg-red-600 text-white rounded text-xs hover:bg-red-700">PDF</button>
+                  <button onclick="downloadQuoteExcel(${i})" class="px-2 py-1 bg-green-600 text-white rounded text-xs hover:bg-green-700">XLS</button>
+                  <button onclick="deleteQuote(${i})" class="px-2 py-1 bg-slate-400 text-white rounded text-xs hover:bg-red-600">🗑️</button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `}
+  </div>
+
+  <!-- Quote Modal -->
+  <div id="quoteModal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden overflow-y-auto">
+    <div class="min-h-screen flex items-start justify-center p-4">
+      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl my-8">
+        <div class="bg-slate-800 text-white px-6 py-4 rounded-t-2xl flex justify-between items-center">
+          <h3 class="text-lg font-bold">📋 Teklif Oluştur / Düzenle</h3>
+          <button onclick="closeQuoteModal()" class="text-slate-300 hover:text-white text-2xl">✕</button>
+        </div>
+        <div class="p-6">
+          <!-- Üst Bilgiler -->
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 mb-1">Teklif No</label>
+              <input id="qNo" class="w-full border rounded px-3 py-2 text-sm" placeholder="TEK-2024-001">
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 mb-1">Müşteri Adı / Firma</label>
+              <input id="qCustomer" class="w-full border rounded px-3 py-2 text-sm" placeholder="Müşteri adı">
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 mb-1">Teklif Tarihi</label>
+              <input id="qDate" type="date" class="w-full border rounded px-3 py-2 text-sm">
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 mb-1">Geçerlilik Tarihi</label>
+              <input id="qValid" type="date" class="w-full border rounded px-3 py-2 text-sm">
+            </div>
+          </div>
+
+          <!-- Döviz Kurları -->
+          <div class="grid grid-cols-3 gap-4 mb-6 p-4 bg-blue-50 rounded-xl">
+            <div>
+              <label class="block text-xs font-semibold text-blue-700 mb-1">1 USD = ₺</label>
+              <input id="qUsdRate" type="number" class="w-full border rounded px-3 py-2 text-sm" placeholder="32.00" value="32">
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-blue-700 mb-1">1 EUR = ₺</label>
+              <input id="qEurRate" type="number" class="w-full border rounded px-3 py-2 text-sm" placeholder="35.00" value="35">
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-blue-700 mb-1">Fiyat Para Birimi</label>
+              <select id="qCurrency" class="w-full border rounded px-3 py-2 text-sm">
+                <option value="TRY">₺ TL</option>
+                <option value="USD">$ USD</option>
+                <option value="EUR">€ EUR</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Kalemler - Kategorili -->
+          <div class="mb-4">
+            <div class="flex justify-between items-center mb-2">
+              <h4 class="font-semibold text-slate-700">Hizmet Kalemleri</h4>
+              <button onclick="addQuoteCategory()" class="px-3 py-1 bg-slate-700 text-white rounded text-sm hover:bg-slate-800">+ Kategori Ekle</button>
+            </div>
+            <div id="quoteCategoriesContainer" class="space-y-3"></div>
+          </div>
+
+          <!-- Vergi & Toplam -->
+          <div class="grid grid-cols-2 gap-6">
+            <div class="p-4 bg-slate-50 rounded-xl">
+              <h4 class="font-semibold text-slate-700 mb-3">Vergi & Ekler</h4>
+              <div class="space-y-2">
+                <div class="flex items-center gap-2">
+                  <input id="qAjans" type="checkbox" class="w-4 h-4">
+                  <label class="text-sm text-slate-600">Acente Hizmet Bedeli</label>
+                  <input id="qAjansRate" type="number" class="border rounded px-2 py-1 text-sm w-20" value="10">
+                  <span class="text-sm text-slate-500">%</span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <input id="qKdv" type="checkbox" class="w-4 h-4" checked>
+                  <label class="text-sm text-slate-600">KDV</label>
+                  <input id="qKdvRate" type="number" class="border rounded px-2 py-1 text-sm w-20" value="20">
+                  <span class="text-sm text-slate-500">%</span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <input id="qServis" type="checkbox" class="w-4 h-4">
+                  <label class="text-sm text-slate-600">Servis Bedeli</label>
+                  <input id="qServisRate" type="number" class="border rounded px-2 py-1 text-sm w-20" value="10">
+                  <span class="text-sm text-slate-500">%</span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <input id="qDiger" type="checkbox" class="w-4 h-4">
+                  <label class="text-sm text-slate-600">Diğer</label>
+                  <input id="qDigerRate" type="number" class="border rounded px-2 py-1 text-sm w-20" value="0">
+                  <span class="text-sm text-slate-500">%</span>
+                </div>
+              </div>
+            </div>
+            <div class="p-4 bg-slate-800 text-white rounded-xl">
+              <div class="space-y-2 text-sm">
+                <div class="flex justify-between">
+                  <span>Ara Toplam</span>
+                  <span id="qSubtotal" class="font-medium">0.00</span>
+                </div>
+                <div class="flex justify-between text-slate-300">
+                  <span>Acente Hizmet Bedeli</span>
+                  <span id="qAjansAmt">0.00</span>
+                </div>
+                <div class="flex justify-between text-slate-300">
+                  <span>KDV</span>
+                  <span id="qKdvAmt">0.00</span>
+                </div>
+                <div class="flex justify-between text-slate-300">
+                  <span>Servis</span>
+                  <span id="qServisAmt">0.00</span>
+                </div>
+                <div class="flex justify-between text-slate-300">
+                  <span>Diğer</span>
+                  <span id="qDigerAmt">0.00</span>
+                </div>
+                <div class="border-t border-slate-600 pt-2 flex justify-between text-lg font-bold">
+                  <span>GENEL TOPLAM</span>
+                  <span id="qGrandTotal" class="text-yellow-400">0.00</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Notlar -->
+          <div class="mt-4">
+            <label class="block text-xs font-semibold text-slate-600 mb-1">Notlar / Şartlar</label>
+            <textarea id="qNotes" rows="3" class="w-full border rounded px-3 py-2 text-sm" placeholder="Teklif notları, ödeme şartları..."></textarea>
+          </div>
+
+          <div class="flex justify-end gap-3 mt-6">
+            <button onclick="closeQuoteModal()" class="btn-secondary">İptal</button>
+            <button onclick="saveQuote()" class="btn-primary">💾 Kaydet</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  `;
+}
+
+function formatNum(n) {
+  return Number(n || 0).toLocaleString('tr-TR', {minimumFractionDigits:2, maximumFractionDigits:2});
+}
+
+function calcTotal(q, toCurrency) {
+  const allRows = q.categories ? q.categories.flatMap(c => c.rows) : (q.rows || []);
+  const rows = allRows;
+  const subtotal = rows.reduce((s, r) => {
+    const unit = parseFloat(r.unit)||0;
+    const days = parseFloat(r.days)||0;
+    const price = parseFloat(r.price)||0;
+    return s + unit*days*price;
+  }, 0);
+
+  const taxes = q.taxes || {};
+  const ajansAmt2 = taxes.ajans ? subtotal * (parseFloat(taxes.ajansRate)||0)/100 : 0;
+  const kdvAmt = taxes.kdv ? subtotal * (parseFloat(taxes.kdvRate)||0)/100 : 0;
+  const servisAmt = taxes.servis ? subtotal * (parseFloat(taxes.servisRate)||0)/100 : 0;
+  const digerAmt = taxes.diger ? subtotal * (parseFloat(taxes.digerRate)||0)/100 : 0;
+  const grand = subtotal + ajansAmt2 + kdvAmt + servisAmt + digerAmt;
+
+  const usdRate = parseFloat(q.usdRate)||32;
+  const eurRate = parseFloat(q.eurRate)||35;
+  const from = q.currency || 'TRY';
+
+  if (from === toCurrency) return grand;
+  if (from === 'TRY') {
+    if (toCurrency === 'USD') return grand / usdRate;
+    if (toCurrency === 'EUR') return grand / eurRate;
+  }
+  if (from === 'USD') {
+    if (toCurrency === 'TRY') return grand * usdRate;
+    if (toCurrency === 'EUR') return grand * usdRate / eurRate;
+  }
+  if (from === 'EUR') {
+    if (toCurrency === 'TRY') return grand * eurRate;
+    if (toCurrency === 'USD') return grand * eurRate / usdRate;
+  }
+  return grand;
+}
+
+let _editQuoteIndex = -1;
+
+const DEFAULT_CATEGORIES = [
+  '🏨 Konaklama',
+  '🍽️ Yiyecek & İçecek',
+  '🚌 Ulaşım',
+  '🎤 Teknik Ekipman',
+  '👥 Hizmet',
+  '📦 Diğer',
+];
+
+function openQuoteModal(q = null, idx = -1) {
+  _editQuoteIndex = idx;
+  document.getElementById('quoteModal').classList.remove('hidden');
+
+  const today = new Date().toISOString().split('T')[0];
+  const validDate = new Date(); validDate.setDate(validDate.getDate()+15);
+  const validStr = validDate.toISOString().split('T')[0];
+  const quotes = DB.quotes();
+  const nextNo = 'TEK-' + new Date().getFullYear() + '-' + String(quotes.length+1).padStart(3,'0');
+
+  document.getElementById('qNo').value = q?.quoteNo || nextNo;
+  document.getElementById('qCustomer').value = q?.customerName || '';
+  document.getElementById('qDate').value = q?.date || today;
+  document.getElementById('qValid').value = q?.validUntil || validStr;
+  document.getElementById('qUsdRate').value = q?.usdRate || '32';
+  document.getElementById('qEurRate').value = q?.eurRate || '35';
+  document.getElementById('qCurrency').value = q?.currency || 'TRY';
+  document.getElementById('qNotes').value = q?.notes || '';
+
+  const taxes = q?.taxes || {};
+  document.getElementById('qAjans').checked = taxes.ajans || false;
+  document.getElementById('qAjansRate').value = taxes.ajansRate || '10';
+  document.getElementById('qKdv').checked = taxes.kdv !== false;
+  document.getElementById('qKdvRate').value = taxes.kdvRate || '20';
+  document.getElementById('qServis').checked = taxes.servis || false;
+  document.getElementById('qServisRate').value = taxes.servisRate || '10';
+  document.getElementById('qDiger').checked = taxes.diger || false;
+  document.getElementById('qDigerRate').value = taxes.digerRate || '0';
+
+  // Categories
+  const container = document.getElementById('quoteCategoriesContainer');
+  container.innerHTML = '';
+  const categories = q?.categories || DEFAULT_CATEGORIES.map(name => ({name, rows:[{desc:'',unit:'',days:'',price:''}]}));
+  categories.forEach((cat, ci) => renderCategoryBlock(cat, ci));
+
+  updateQuoteTotals();
+}
+
+function closeQuoteModal() {
+  document.getElementById('quoteModal').classList.add('hidden');
+}
+
+function renderCategoryBlock(cat, ci) {
+  const container = document.getElementById('quoteCategoriesContainer');
+  const div = document.createElement('div');
+  div.className = 'quote-category border border-slate-200 rounded-lg overflow-hidden';
+  div.setAttribute('data-ci', ci);
+  div.innerHTML = `
+    <div class="flex items-center justify-between bg-slate-700 text-white px-3 py-2">
+      <input class="bg-transparent font-semibold text-sm focus:outline-none cat-name w-full mr-2" value="${cat.name}" placeholder="Kategori adı...">
+      <div class="flex gap-1 flex-shrink-0">
+        <button onclick="addRowToCategory(this)" class="px-2 py-0.5 bg-blue-500 hover:bg-blue-600 rounded text-xs">+ Satır</button>
+        <button onclick="this.closest('.quote-category').remove(); updateQuoteTotals();" class="px-2 py-0.5 bg-red-500 hover:bg-red-600 rounded text-xs">✕</button>
+      </div>
+    </div>
+    <table class="w-full text-sm border-collapse">
+      <thead>
+        <tr class="bg-slate-100 text-slate-600 text-xs">
+          <th class="px-3 py-1.5 text-left">Açıklama / Description</th>
+          <th class="px-3 py-1.5 text-center w-20">Birim/Kişi</th>
+          <th class="px-3 py-1.5 text-center w-20">Gün/Gece</th>
+          <th class="px-3 py-1.5 text-right w-28">Birim Fiyat</th>
+          <th class="px-3 py-1.5 text-right w-28">Toplam</th>
+          <th class="px-3 py-1.5 w-6"></th>
+        </tr>
+      </thead>
+      <tbody class="cat-rows">
+        ${(cat.rows||[]).map((r,ri) => makeRowHTML(r, ri)).join('')}
+      </tbody>
+    </table>
+  `;
+  container.appendChild(div);
+}
+
+function makeRowHTML(r, ri) {
+  const bg = ri%2===0 ? '' : 'bg-slate-50';
+  return `<tr class="quote-row ${bg}">
+    <td class="px-3 py-1">
+      <input class="w-full border-b border-slate-100 px-1 py-0.5 text-sm focus:outline-none q-desc" 
+        placeholder="Açıklama..." value="${r.desc||''}">
+    </td>
+    <td class="px-3 py-1">
+      <input type="number" class="w-full border-b border-slate-100 px-1 py-0.5 text-sm text-center focus:outline-none q-unit" 
+        placeholder="1" value="${r.unit||''}" oninput="updateQuoteTotals()">
+    </td>
+    <td class="px-3 py-1">
+      <input type="number" class="w-full border-b border-slate-100 px-1 py-0.5 text-sm text-center focus:outline-none q-days" 
+        placeholder="1" value="${r.days||''}" oninput="updateQuoteTotals()">
+    </td>
+    <td class="px-3 py-1">
+      <input type="number" class="w-full border-b border-slate-100 px-1 py-0.5 text-sm text-right focus:outline-none q-price" 
+        placeholder="0.00" value="${r.price||''}" oninput="updateQuoteTotals()">
+    </td>
+    <td class="px-3 py-1 text-right text-sm font-medium q-total text-slate-600">-</td>
+    <td class="px-1 py-1 text-center">
+      <button onclick="this.closest('tr').remove(); updateQuoteTotals();" class="text-red-300 hover:text-red-600 text-xs">✕</button>
+    </td>
+  </tr>`;
+}
+
+function addQuoteCategory() {
+  const container = document.getElementById('quoteCategoriesContainer');
+  const ci = container.querySelectorAll('.quote-category').length;
+  renderCategoryBlock({name:'Yeni Kategori', rows:[{desc:'',unit:'',days:'',price:''}]}, ci);
+  updateQuoteTotals();
+}
+
+function addRowToCategory(btn) {
+  const catDiv = btn.closest('.quote-category');
+  const tbody = catDiv.querySelector('.cat-rows');
+  const ri = tbody.querySelectorAll('.quote-row').length;
+  const tr = document.createElement('tr');
+  tr.className = 'quote-row ' + (ri%2===0?'':'bg-slate-50');
+  tr.innerHTML = makeRowHTML({}, ri);
+  tbody.appendChild(tr);
+  updateQuoteTotals();
+}
+
+function addQuoteRow() { addQuoteCategory(); }
+
+function getQuoteCategories() {
+  const cats = [];
+  document.querySelectorAll('.quote-category').forEach(catDiv => {
+    const name = catDiv.querySelector('.cat-name')?.value || '';
+    const rows = Array.from(catDiv.querySelectorAll('.quote-row')).map(tr => ({
+      desc:  tr.querySelector('.q-desc')?.value || '',
+      unit:  tr.querySelector('.q-unit')?.value || '',
+      days:  tr.querySelector('.q-days')?.value || '',
+      price: tr.querySelector('.q-price')?.value || '',
+    }));
+    cats.push({name, rows});
+  });
+  return cats;
+}
+
+function getQuoteRows() {
+  // Flat list for backward compat
+  const cats = getQuoteCategories();
+  return cats.flatMap(c => c.rows);
+}
+
+function updateQuoteTotals() {
+  const rows = document.querySelectorAll('.quote-row');
+  let subtotal = 0;
+  rows.forEach(tr => {
+    const unit = parseFloat(tr.querySelector('.q-unit')?.value)||0;
+    const days = parseFloat(tr.querySelector('.q-days')?.value)||0;
+    const price = parseFloat(tr.querySelector('.q-price')?.value)||0;
+    const total = unit*days*price;
+    const sym = getCurrencySymbol();
+    const el = tr.querySelector('.q-total');
+    if (el) el.textContent = sym + formatNum(total);
+    subtotal += total;
+  });
+
+  const ajansOn = document.getElementById('qAjans')?.checked;
+  const ajansRate = parseFloat(document.getElementById('qAjansRate')?.value)||0;
+  const kdvOn = document.getElementById('qKdv')?.checked;
+  const kdvRate = parseFloat(document.getElementById('qKdvRate')?.value)||0;
+  const servisOn = document.getElementById('qServis')?.checked;
+  const servisRate = parseFloat(document.getElementById('qServisRate')?.value)||0;
+  const digerOn = document.getElementById('qDiger')?.checked;
+  const digerRate = parseFloat(document.getElementById('qDigerRate')?.value)||0;
+
+  const ajansAmt = ajansOn ? subtotal * ajansRate/100 : 0;
+  const kdvAmt = kdvOn ? subtotal * kdvRate/100 : 0;
+  const servisAmt = servisOn ? subtotal * servisRate/100 : 0;
+  const digerAmt = digerOn ? subtotal * digerRate/100 : 0;
+  const grand = subtotal + ajansAmt + kdvAmt + servisAmt + digerAmt;
+  const sym = getCurrencySymbol();
+
+  document.getElementById('qSubtotal').textContent = sym + formatNum(subtotal);
+  document.getElementById('qAjansAmt').textContent = sym + formatNum(ajansAmt);
+  document.getElementById('qKdvAmt').textContent = sym + formatNum(kdvAmt);
+  document.getElementById('qServisAmt').textContent = sym + formatNum(servisAmt);
+  document.getElementById('qDigerAmt').textContent = sym + formatNum(digerAmt);
+  document.getElementById('qGrandTotal').textContent = sym + formatNum(grand);
+}
+
+function getCurrencySymbol() {
+  const c = document.getElementById('qCurrency')?.value;
+  return c === 'USD' ? '$' : c === 'EUR' ? '€' : '₺';
+}
+
+function saveQuote() {
+  const rows = getQuoteRows();
+  const categories = getQuoteCategories();
+  const q = {
+    quoteNo:      document.getElementById('qNo').value,
+    customerName: document.getElementById('qCustomer').value,
+    date:         document.getElementById('qDate').value,
+    validUntil:   document.getElementById('qValid').value,
+    usdRate:      document.getElementById('qUsdRate').value,
+    eurRate:      document.getElementById('qEurRate').value,
+    currency:     document.getElementById('qCurrency').value,
+    notes:        document.getElementById('qNotes').value,
+    categories,
+    rows: categories.flatMap(c => c.rows),
+    taxes: {
+      ajans:      document.getElementById('qAjans').checked,
+      ajansRate:  document.getElementById('qAjansRate').value,
+      kdv:        document.getElementById('qKdv').checked,
+      kdvRate:    document.getElementById('qKdvRate').value,
+      servis:     document.getElementById('qServis').checked,
+      servisRate: document.getElementById('qServisRate').value,
+      diger:      document.getElementById('qDiger').checked,
+      digerRate:  document.getElementById('qDigerRate').value,
+    },
+    createdAt: new Date().toISOString(),
+  };
+
+  const quotes = DB.quotes();
+  if (_editQuoteIndex >= 0) {
+    quotes[_editQuoteIndex] = q;
+  } else {
+    quotes.push(q);
+  }
+  DB.saveQuotes(quotes);
+  closeQuoteModal();
+  render();
+  toast('✅ Teklif kaydedildi!');
+}
+
+function editQuote(i) {
+  const q = DB.quotes()[i];
+  openQuoteModal(q, i);
+}
+
+function deleteQuote(i) {
+  if (!confirm('Bu teklifi silmek istediğinizden emin misiniz?')) return;
+  const quotes = DB.quotes();
+  quotes.splice(i, 1);
+  DB.saveQuotes(quotes);
+  render();
+  toast('Teklif silindi');
+}
+
+function attachQuoteHandlers() {
+  // Tax checkbox listeners
+  ['qAjans','qKdv','qServis','qDiger'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('change', updateQuoteTotals);
+  });
+  ['qAjansRate','qKdvRate','qServisRate','qDigerRate'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', updateQuoteTotals);
+  });
+  const sel = document.getElementById('qCurrency');
+  if (sel) sel.addEventListener('change', updateQuoteTotals);
+}
+
+// ── PDF EXPORT ─────────────────────────────────────────────────────────────
+function downloadQuotePDF(idx) {
+  const q = DB.quotes()[idx];
+  if (!q) return;
+
+  const sym = q.currency === 'USD' ? '$' : q.currency === 'EUR' ? '€' : '₺';
+  const allRows = q.categories ? q.categories.flatMap(c => c.rows) : (q.rows || []);
+  const rows = allRows;
+  const taxes = q.taxes || {};
+
+  let subtotal = rows.reduce((s,r) => s + (parseFloat(r.unit)||0)*(parseFloat(r.days)||0)*(parseFloat(r.price)||0), 0);
+  const ajansAmt  = taxes.ajans  ? subtotal*(parseFloat(taxes.ajansRate)||0)/100 : 0;
+  const kdvAmt    = taxes.kdv    ? subtotal*(parseFloat(taxes.kdvRate)||0)/100 : 0;
+  const servisAmt = taxes.servis ? subtotal*(parseFloat(taxes.servisRate)||0)/100 : 0;
+  const digerAmt  = taxes.diger  ? subtotal*(parseFloat(taxes.digerRate)||0)/100 : 0;
+  const grand = subtotal + ajansAmt + kdvAmt + servisAmt + digerAmt;
+
+  const settings = DB.settings();
+
+  const html = `<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: 'Inter', Arial, sans-serif; font-size: 11px; color: #1e293b; }
+  .header { background: #1a2744; color: white; padding: 24px 32px; display: flex; justify-content: space-between; align-items: center; }
+  .header h1 { font-size: 22px; font-weight: 700; }
+  .header .sub { font-size: 11px; color: #94a3b8; margin-top: 4px; }
+  .badge { background: #2563eb; color: white; padding: 6px 16px; border-radius: 20px; font-weight: 700; font-size: 13px; }
+  .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0; margin: 24px 32px; border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden; }
+  .info-item { padding: 10px 16px; border-bottom: 1px solid #e2e8f0; }
+  .info-item:nth-child(odd) { background: #f8fafc; }
+  .info-label { font-size: 9px; color: #64748b; font-weight: 600; text-transform: uppercase; }
+  .info-value { font-size: 12px; font-weight: 600; margin-top: 2px; }
+  .section { margin: 0 32px 20px; }
+  .section-title { background: #1a2744; color: white; padding: 8px 14px; font-weight: 700; font-size: 11px; border-radius: 6px 6px 0 0; }
+  table { width: 100%; border-collapse: collapse; }
+  th { background: #334155; color: white; padding: 8px 10px; font-size: 10px; font-weight: 600; }
+  td { padding: 7px 10px; border-bottom: 1px solid #e2e8f0; font-size: 10px; }
+  tr:nth-child(even) td { background: #f8fafc; }
+  .text-right { text-align: right; }
+  .text-center { text-align: center; }
+  .subtotal-row td { background: #1a2744 !important; color: white; font-weight: 700; font-size: 11px; }
+  .cat-header td { background: #2563eb !important; color: white; font-weight: 700; font-size: 10px; padding: 6px 10px; }
+  .cat-subtotal td { background: #dbeafe !important; color: #1e40af; font-weight: 600; font-style: italic; font-size: 9.5px; }
+  .row-even td { background: #ffffff; }
+  .row-odd td { background: #f8fafc; }
+  .tax-row td { background: #fef9c3; color: #854d0e; }
+  .total-row td { background: #b8973a !important; color: white; font-weight: 700; font-size: 13px; }
+  .notes { margin: 0 32px 24px; padding: 14px; background: #f8fafc; border-left: 4px solid #2563eb; border-radius: 4px; font-size: 10px; color: #475569; }
+  .footer { background: #f1f5f9; padding: 12px 32px; text-align: center; font-size: 9px; color: #94a3b8; margin-top: 20px; }
+</style>
+</head>
+<body>
+<div class="header">
+  <div>
+    <h1>${settings.agencyName || 'Acente Portalı'}</h1>
+    <div class="sub">TEKLİF / QUOTATION</div>
+    <div class="sub">${settings.agencyAddress || ''} | ${settings.agencyPhone || ''}</div>
+  </div>
+  <div class="badge">${q.quoteNo}</div>
+</div>
+
+<div class="info-grid">
+  <div class="info-item"><div class="info-label">Müşteri / Customer</div><div class="info-value">${q.customerName || '-'}</div></div>
+  <div class="info-item"><div class="info-label">Teklif Tarihi / Date</div><div class="info-value">${q.date || '-'}</div></div>
+  <div class="info-item"><div class="info-label">Geçerlilik / Valid Until</div><div class="info-value">${q.validUntil || '-'}</div></div>
+  <div class="info-item"><div class="info-label">Para Birimi / Currency</div><div class="info-value">${q.currency === 'USD' ? '🇺🇸 US Dollar (USD)' : q.currency === 'EUR' ? '🇪🇺 Euro (EUR)' : '🇹🇷 Türk Lirası (TRY)'}</div></div>
+</div>
+
+<div class="section">
+  <div class="section-title">HİZMET KALEMLERİ / DESCRIPTION OF SERVICES</div>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:42%">Açıklama / Description</th>
+        <th class="text-center" style="width:13%">Birim/Kişi<br>Unit/Pax</th>
+        <th class="text-center" style="width:13%">Gün/Gece<br>Days/Nights</th>
+        <th class="text-right" style="width:16%">Birim Fiyat<br>Unit Price</th>
+        <th class="text-right" style="width:16%">Toplam<br>Total</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${(q.categories || [{name:'Hizmetler', rows: q.rows||[]}]).map(cat => {
+        const catRows = cat.rows || [];
+        const catTotal = catRows.reduce((s,r)=>s+(parseFloat(r.unit)||0)*(parseFloat(r.days)||0)*(parseFloat(r.price)||0),0);
+        return `
+          <tr class="cat-header"><td colspan="5">${cat.name}</td></tr>
+          ${catRows.map((r,ri) => {
+            const t = (parseFloat(r.unit)||0)*(parseFloat(r.days)||0)*(parseFloat(r.price)||0);
+            return `<tr class="${ri%2===0?'row-even':'row-odd'}">
+              <td style="padding-left:20px">${r.desc||''}</td>
+              <td class="text-center">${r.unit||''}</td>
+              <td class="text-center">${r.days||''}</td>
+              <td class="text-right">${sym} ${formatNum(parseFloat(r.price)||0)}</td>
+              <td class="text-right">${sym} ${formatNum(t)}</td>
+            </tr>`;
+          }).join('')}
+          <tr class="cat-subtotal">
+            <td colspan="4" style="text-align:right;padding-right:10px;">Kategori Toplamı / Category Total</td>
+            <td class="text-right">${sym} ${formatNum(catTotal)}</td>
+          </tr>
+        `;
+      }).join('')}
+      <tr class="subtotal-row">
+        <td colspan="4">ARA TOPLAM / SUBTOTAL</td>
+        <td class="text-right">${sym} ${formatNum(subtotal)}</td>
+      </tr>
+      ${taxes.ajans ? `<tr class="tax-row"><td colspan="4">Acente Hizmet Bedeli %${taxes.ajansRate} / Agency Fee %${taxes.ajansRate}</td><td class="text-right">${sym} ${formatNum(ajansAmt)}</td></tr>` : ''}
+      ${taxes.kdv ? `<tr class="tax-row"><td colspan="4">KDV %${taxes.kdvRate} / VAT %${taxes.kdvRate}</td><td class="text-right">${sym} ${formatNum(kdvAmt)}</td></tr>` : ''}
+      ${taxes.servis ? `<tr class="tax-row"><td colspan="4">Servis Bedeli %${taxes.servisRate} / Service Charge %${taxes.servisRate}</td><td class="text-right">${sym} ${formatNum(servisAmt)}</td></tr>` : ''}
+      ${taxes.diger ? `<tr class="tax-row"><td colspan="4">Diğer / Other %${taxes.digerRate}</td><td class="text-right">${sym} ${formatNum(digerAmt)}</td></tr>` : ''}
+      <tr class="total-row">
+        <td colspan="4">GENEL TOPLAM / GRAND TOTAL</td>
+        <td class="text-right">${sym} ${formatNum(grand)}</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+${q.notes ? `<div class="notes"><strong>Notlar / Notes:</strong><br>${q.notes.replace(/\n/g,'<br>')}</div>` : ''}
+
+<div class="footer">
+  ${settings.agencyName || 'Acente Portalı'} | ${settings.agencyEmail || ''} | Bu teklif ${q.validUntil || ''} tarihine kadar geçerlidir. / This quotation is valid until ${q.validUntil || ''}.
+</div>
+</body></html>`;
+
+  const win = window.open('', '_blank');
+  win.document.write(html);
+  win.document.close();
+  setTimeout(() => win.print(), 800);
+}
+
+// ── EXCEL EXPORT (gerçek .xlsx) ─────────────────────────────────────────────
+function downloadQuoteExcel(idx) {
+  const q = DB.quotes()[idx];
+  if (!q) return;
+
+  const sym = q.currency === 'USD' ? '$' : q.currency === 'EUR' ? '€' : '₺';
+  const currencyLabel = q.currency === 'USD' ? 'US Dollar (USD)' : q.currency === 'EUR' ? 'Euro (EUR)' : 'Türk Lirası (TRY)';
+  const taxes = q.taxes || {};
+  const settings = DB.settings();
+  const cats = q.categories || [{name:'Hizmetler', rows: q.rows||[]}];
+  const allRows = cats.flatMap(c=>c.rows);
+
+  let subtotal = allRows.reduce((s,r)=>s+(parseFloat(r.unit)||0)*(parseFloat(r.days)||0)*(parseFloat(r.price)||0),0);
+  const ajansAmt  = taxes.ajans  ? subtotal*(parseFloat(taxes.ajansRate)||0)/100 : 0;
+  const kdvAmt    = taxes.kdv    ? subtotal*(parseFloat(taxes.kdvRate)||0)/100 : 0;
+  const servisAmt = taxes.servis ? subtotal*(parseFloat(taxes.servisRate)||0)/100 : 0;
+  const digerAmt  = taxes.diger  ? subtotal*(parseFloat(taxes.digerRate)||0)/100 : 0;
+  const grand = subtotal + ajansAmt + kdvAmt + servisAmt + digerAmt;
+
+  // Build XML for .xlsx using SpreadsheetML
+  const esc = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+  // Color palette
+  const C_DARK    = '1A2744';
+  const C_BLUE    = '2563EB';
+  const C_GOLD    = 'B8973A';
+  const C_CATBG   = 'DBEAFE';
+  const C_EVEN    = 'FFFFFF';
+  const C_ODD     = 'F8FAFC';
+  const C_SUBTOT  = 'EFF6FF';
+  const C_TAX     = 'FEF9C3';
+  const C_WHITE   = 'FFFFFF';
+
+  let rows_xml = '';
+  let rowNum = 9; // start after header rows
+
+  // Helper: cell
+  const cell = (col, val, style) => {
+    const isNum = typeof val === 'number';
+    return `<Cell ss:Index="${col}" ss:StyleID="${style}"><Data ss:Type="${isNum?'Number':'String'}">${esc(val)}</Data></Cell>`;
+  };
+
+  cats.forEach(cat => {
+    const catRows = cat.rows || [];
+    // Category header row
+    rows_xml += `<Row ss:Height="20">
+      <Cell ss:MergeAcross="4" ss:StyleID="CatHeader"><Data ss:Type="String">${esc(cat.name)}</Data></Cell>
+    </Row>\n`;
+    rowNum++;
+
+    catRows.forEach((r, ri) => {
+      const t = (parseFloat(r.unit)||0)*(parseFloat(r.days)||0)*(parseFloat(r.price)||0);
+      const bg = ri%2===0 ? 'RowEven' : 'RowOdd';
+      rows_xml += `<Row ss:Height="18">
+        ${cell(1, '   ' + (r.desc||''), bg)}
+        ${cell(2, parseFloat(r.unit)||'', bg)}
+        ${cell(3, parseFloat(r.days)||'', bg)}
+        ${cell(4, parseFloat(r.price)||0, bg+'Num')}
+        ${cell(5, t, bg+'Num')}
+      </Row>\n`;
+      rowNum++;
+    });
+
+    const catTotal = catRows.reduce((s,r)=>s+(parseFloat(r.unit)||0)*(parseFloat(r.days)||0)*(parseFloat(r.price)||0),0);
+    rows_xml += `<Row ss:Height="18">
+      <Cell ss:MergeAcross="3" ss:StyleID="CatSubtotal"><Data ss:Type="String">Kategori Toplamı / Category Total</Data></Cell>
+      ${cell(5, catTotal, 'CatSubtotalNum')}
+    </Row>\n`;
+    rowNum++;
+  });
+
+  // Totals
+  rows_xml += `<Row ss:Height="22">
+    <Cell ss:MergeAcross="3" ss:StyleID="SubtotalLabel"><Data ss:Type="String">ARA TOPLAM / SUBTOTAL</Data></Cell>
+    ${cell(5, subtotal, 'SubtotalNum')}
+  </Row>\n`;
+  if (taxes.ajans) rows_xml += `<Row ss:Height="18"><Cell ss:MergeAcross="3" ss:StyleID="TaxLabel"><Data ss:Type="String">Acente Hizmet Bedeli %${taxes.ajansRate} / Agency Fee %${taxes.ajansRate}</Data></Cell>${cell(5,ajansAmt,'TaxNum')}</Row>\n`;
+  if (taxes.kdv)   rows_xml += `<Row ss:Height="18"><Cell ss:MergeAcross="3" ss:StyleID="TaxLabel"><Data ss:Type="String">KDV %${taxes.kdvRate} / VAT %${taxes.kdvRate}</Data></Cell>${cell(5,kdvAmt,'TaxNum')}</Row>\n`;
+  if (taxes.servis) rows_xml += `<Row ss:Height="18"><Cell ss:MergeAcross="3" ss:StyleID="TaxLabel"><Data ss:Type="String">Servis Bedeli %${taxes.servisRate} / Service Charge</Data></Cell>${cell(5,servisAmt,'TaxNum')}</Row>\n`;
+  if (taxes.diger)  rows_xml += `<Row ss:Height="18"><Cell ss:MergeAcross="3" ss:StyleID="TaxLabel"><Data ss:Type="String">Diğer %${taxes.digerRate} / Other</Data></Cell>${cell(5,digerAmt,'TaxNum')}</Row>\n`;
+  rows_xml += `<Row ss:Height="28">
+    <Cell ss:MergeAcross="3" ss:StyleID="GrandLabel"><Data ss:Type="String">GENEL TOPLAM / GRAND TOTAL (${sym})</Data></Cell>
+    ${cell(5, grand, 'GrandNum')}
+  </Row>\n`;
+
+  if (q.notes) {
+    rows_xml += `<Row ss:Height="6"></Row>\n`;
+    rows_xml += `<Row><Cell ss:StyleID="TaxLabel"><Data ss:Type="String">Notlar / Notes:</Data></Cell><Cell ss:MergeAcross="3" ss:StyleID="RowEven"><Data ss:Type="String">${esc(q.notes)}</Data></Cell></Row>\n`;
+  }
+
+  const xlsxml = `<?xml version="1.0" encoding="UTF-8"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+  xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"
+  xmlns:x="urn:schemas-microsoft-com:office:excel">
+<Styles>
+  <Style ss:ID="Default"><Font ss:FontName="Arial" ss:Size="10"/></Style>
+  <Style ss:ID="Title"><Alignment ss:Horizontal="Center"/><Font ss:FontName="Arial" ss:Bold="1" ss:Size="16" ss:Color="#${C_WHITE}"/><Interior ss:Color="#${C_DARK}" ss:Pattern="Solid"/></Style>
+  <Style ss:ID="InfoLabel"><Font ss:FontName="Arial" ss:Bold="1" ss:Size="9" ss:Color="#1A2744"/><Interior ss:Color="#EFF6FF" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#CBD5E1"/></Borders></Style>
+  <Style ss:ID="InfoValue"><Font ss:FontName="Arial" ss:Size="9"/><Interior ss:Color="#FFFFFF" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#CBD5E1"/></Borders></Style>
+  <Style ss:ID="ColHeader"><Alignment ss:Horizontal="Center"/><Font ss:FontName="Arial" ss:Bold="1" ss:Size="9" ss:Color="#${C_WHITE}"/><Interior ss:Color="#334155" ss:Pattern="Solid"/></Style>
+  <Style ss:ID="ColHeaderR"><Alignment ss:Horizontal="Right"/><Font ss:FontName="Arial" ss:Bold="1" ss:Size="9" ss:Color="#${C_WHITE}"/><Interior ss:Color="#334155" ss:Pattern="Solid"/></Style>
+  <Style ss:ID="CatHeader"><Font ss:FontName="Arial" ss:Bold="1" ss:Size="10" ss:Color="#${C_WHITE}"/><Interior ss:Color="#2563EB" ss:Pattern="Solid"/></Style>
+  <Style ss:ID="CatSubtotal"><Alignment ss:Horizontal="Right"/><Font ss:FontName="Arial" ss:Italic="1" ss:Size="9" ss:Color="#1e40af"/><Interior ss:Color="#${C_CATBG}" ss:Pattern="Solid"/></Style>
+  <Style ss:ID="CatSubtotalNum"><Alignment ss:Horizontal="Right"/><Font ss:FontName="Arial" ss:Bold="1" ss:Size="9" ss:Color="#1e40af"/><Interior ss:Color="#${C_CATBG}" ss:Pattern="Solid"/><NumberFormat ss:Format="#,##0.00"/></Style>
+  <Style ss:ID="RowEven"><Font ss:FontName="Arial" ss:Size="9"/><Interior ss:Color="#${C_EVEN}" ss:Pattern="Solid"/></Style>
+  <Style ss:ID="RowEvenNum"><Alignment ss:Horizontal="Right"/><Font ss:FontName="Arial" ss:Size="9"/><Interior ss:Color="#${C_EVEN}" ss:Pattern="Solid"/><NumberFormat ss:Format="#,##0.00"/></Style>
+  <Style ss:ID="RowOdd"><Font ss:FontName="Arial" ss:Size="9"/><Interior ss:Color="#F8FAFC" ss:Pattern="Solid"/></Style>
+  <Style ss:ID="RowOddNum"><Alignment ss:Horizontal="Right"/><Font ss:FontName="Arial" ss:Size="9"/><Interior ss:Color="#F8FAFC" ss:Pattern="Solid"/><NumberFormat ss:Format="#,##0.00"/></Style>
+  <Style ss:ID="SubtotalLabel"><Alignment ss:Horizontal="Right"/><Font ss:FontName="Arial" ss:Bold="1" ss:Size="11" ss:Color="#${C_WHITE}"/><Interior ss:Color="#${C_DARK}" ss:Pattern="Solid"/></Style>
+  <Style ss:ID="SubtotalNum"><Alignment ss:Horizontal="Right"/><Font ss:FontName="Arial" ss:Bold="1" ss:Size="11" ss:Color="#${C_WHITE}"/><Interior ss:Color="#${C_DARK}" ss:Pattern="Solid"/><NumberFormat ss:Format="#,##0.00"/></Style>
+  <Style ss:ID="TaxLabel"><Alignment ss:Horizontal="Right"/><Font ss:FontName="Arial" ss:Size="9" ss:Color="#854d0e"/><Interior ss:Color="#FEF9C3" ss:Pattern="Solid"/></Style>
+  <Style ss:ID="TaxNum"><Alignment ss:Horizontal="Right"/><Font ss:FontName="Arial" ss:Size="9" ss:Color="#854d0e"/><Interior ss:Color="#FEF9C3" ss:Pattern="Solid"/><NumberFormat ss:Format="#,##0.00"/></Style>
+  <Style ss:ID="GrandLabel"><Alignment ss:Horizontal="Right"/><Font ss:FontName="Arial" ss:Bold="1" ss:Size="13" ss:Color="#${C_WHITE}"/><Interior ss:Color="#${C_GOLD}" ss:Pattern="Solid"/></Style>
+  <Style ss:ID="GrandNum"><Alignment ss:Horizontal="Right"/><Font ss:FontName="Arial" ss:Bold="1" ss:Size="13" ss:Color="#${C_WHITE}"/><Interior ss:Color="#${C_GOLD}" ss:Pattern="Solid"/><NumberFormat ss:Format="#,##0.00"/></Style>
+</Styles>
+<Worksheet ss:Name="Teklif">
+<Table ss:DefaultColumnWidth="100">
+  <Column ss:Width="260"/>
+  <Column ss:Width="80"/>
+  <Column ss:Width="80"/>
+  <Column ss:Width="110"/>
+  <Column ss:Width="120"/>
+  <Row ss:Height="36"><Cell ss:MergeAcross="4" ss:StyleID="Title"><Data ss:Type="String">TEKLİF / QUOTATION — ${esc(settings.agencyName||'Acente Portalı')}</Data></Cell></Row>
+  <Row ss:Height="18"><Cell ss:StyleID="InfoLabel"><Data ss:Type="String">Teklif No / Quote No</Data></Cell><Cell ss:MergeAcross="3" ss:StyleID="InfoValue"><Data ss:Type="String">${esc(q.quoteNo)}</Data></Cell></Row>
+  <Row ss:Height="18"><Cell ss:StyleID="InfoLabel"><Data ss:Type="String">Müşteri / Customer</Data></Cell><Cell ss:MergeAcross="3" ss:StyleID="InfoValue"><Data ss:Type="String">${esc(q.customerName)}</Data></Cell></Row>
+  <Row ss:Height="18"><Cell ss:StyleID="InfoLabel"><Data ss:Type="String">Teklif Tarihi / Date</Data></Cell><Cell ss:MergeAcross="3" ss:StyleID="InfoValue"><Data ss:Type="String">${esc(q.date)}</Data></Cell></Row>
+  <Row ss:Height="18"><Cell ss:StyleID="InfoLabel"><Data ss:Type="String">Geçerlilik / Valid Until</Data></Cell><Cell ss:MergeAcross="3" ss:StyleID="InfoValue"><Data ss:Type="String">${esc(q.validUntil)}</Data></Cell></Row>
+  <Row ss:Height="18"><Cell ss:StyleID="InfoLabel"><Data ss:Type="String">Para Birimi / Currency</Data></Cell><Cell ss:MergeAcross="3" ss:StyleID="InfoValue"><Data ss:Type="String">${esc(currencyLabel)}</Data></Cell></Row>
+  <Row ss:Height="8"></Row>
+  <Row ss:Height="22">
+    <Cell ss:StyleID="ColHeader"><Data ss:Type="String">Açıklama / Description</Data></Cell>
+    <Cell ss:StyleID="ColHeader"><Data ss:Type="String">Birim/Kişi</Data></Cell>
+    <Cell ss:StyleID="ColHeader"><Data ss:Type="String">Gün/Gece</Data></Cell>
+    <Cell ss:StyleID="ColHeaderR"><Data ss:Type="String">Birim Fiyat (${sym})</Data></Cell>
+    <Cell ss:StyleID="ColHeaderR"><Data ss:Type="String">Toplam (${sym})</Data></Cell>
+  </Row>
+  ${rows_xml}
+</Table>
+</Worksheet>
+</Workbook>`;
+
+  const blob = new Blob([xlsxml], {type: 'application/vnd.ms-excel;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${q.quoteNo || 'teklif'}.xls`;
+  a.click();
+  URL.revokeObjectURL(url);
+  toast('✅ Excel dosyası indirildi!');
+}
 
 </script>
 </body>
